@@ -1,0 +1,17 @@
+[package]
+name = "dplayer-ui"
+version = "0.1.0"
+authors = ["dragan <dragan.ljubojevic@gmail.com>"]
+edition = "2018"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+seed = "0.8.0"
+serde = "1.0.125"
+uuid = { version = "0.8.2", features = ["serde", "v4", "wasm-bindgen"] }
+indexmap = { version = "1.6.1", features = ["serde-1"] }
+enclose = "1.1.8"
+strum = "0.20"
+strum_macros = "0.20"
