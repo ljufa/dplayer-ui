@@ -3,23 +3,22 @@ use strum_macros::IntoStaticStr;
 
 use std::rc::Rc;
 
-const WS_URL: &str = "ws://192.168.44.26:8000/api/player";
+const WS_URL: &str = "ws://192.168.5.59:8000/api/player";
 
 // ------ ------
 //     Init
 // ------ ------
-
 
 pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
     Model {
         streamer_status: StreamerStatus {
             source_player: PlayerType::MPD,
             selected_audio_output: AudioOut::SPKR,
-        },
-        dac_status: DacStatus {
-            volume: 0,
-            filter: FilterType::SharpRollOff,
-            sound_sett: 0,
+            dac_status: DacStatus {
+                volume: 0,
+                filter: FilterType::SharpRollOff,
+                sound_sett: 0,
+            },
         },
         player_status: None,
         input_text: String::new(),
@@ -37,7 +36,6 @@ pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
 pub struct Model {
     streamer_status: StreamerStatus,
     player_status: Option<PlayerStatus>,
-    dac_status: DacStatus,
     input_text: String,
     web_socket: WebSocket,
     web_socket_reconnector: Option<StreamHandle>,
@@ -48,7 +46,9 @@ pub struct Model {
 pub struct StreamerStatus {
     pub selected_audio_output: AudioOut,
     pub source_player: PlayerType,
+    pub dac_status: DacStatus,
 }
+
 #[derive(Debug, serde::Deserialize)]
 pub struct DacStatus {
     pub volume: u8,
@@ -122,7 +122,6 @@ pub enum Command {
 pub enum Msg {
     WebSocketOpened,
     PlayerStatusChanged(PlayerStatus),
-    DacStatusChanged(DacStatus),
     StreamerStatusChanged(StreamerStatus),
     CloseWebSocket,
     WebSocketClosed(CloseEvent),
@@ -186,10 +185,6 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
         }
         Msg::AlbumImageUpdated(image) => {
             model.player_status.as_mut().unwrap().uri = Some(image.text);
-        }
-        Msg::DacStatusChanged(message) => {
-            model.waiting_response = false;
-            model.dac_status = message;
         }
         Msg::StreamerStatusChanged(message) => {
             model.waiting_response = false;
@@ -284,12 +279,7 @@ fn decode_message(message: WebSocketMessage, msg_sender: Rc<dyn Fn(Option<Msg>)>
                 .json::<PlayerStatus>()
                 .expect("Failed to decode WebSocket text message");
             msg_sender(Some(Msg::PlayerStatusChanged(msg)));
-        } else if msg_text.contains("volume") {
-            let msg = message
-                .json::<DacStatus>()
-                .expect("Failed to decode WebSocket text message");
-            msg_sender(Some(Msg::DacStatusChanged(msg)));
-        } else if msg_text.contains("source_player") {
+        } else if msg_text.contains("source_player") || msg_text.contains("volume") {
             let msg = message
                 .json::<StreamerStatus>()
                 .expect("Failed to decode WebSocket text message");
@@ -341,7 +331,7 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
             view_controls(model.player_status.is_some()),
             view_track_info(
                 model.player_status.as_ref(),
-                &model.dac_status,
+                &model.streamer_status.dac_status,
                 &model.streamer_status.selected_audio_output
             ),
         ]

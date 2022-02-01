@@ -1,4 +1,4 @@
-RPI_HOST=192.168.44.26
+RPI_HOST=192.168.5.59
 RPI_DIR=/home/ubuntu/.dplay/ui
 
 
@@ -9,7 +9,7 @@ build:
 copytorpi: build
 	rsync -av pkg ubuntu@$(RPI_HOST):$(RPI_DIR)
 	rsync -av public/ ubuntu@$(RPI_HOST):$(RPI_DIR)
-	# rsync -av index.* ubuntu@$(RPI_HOST):$(RPI_DIR)
+	#rsync -av index.* ubuntu@$(RPI_HOST):$(RPI_DIR)
 
 serve: 
 	cargo make serve
