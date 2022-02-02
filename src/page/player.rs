@@ -20,7 +20,8 @@ pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
                 sound_sett: 0,
             },
         },
-        player_status: None,
+        player_info: None,
+        current_track_info: None,
         input_text: String::new(),
         web_socket: create_websocket(orders),
         web_socket_reconnector: None,
@@ -35,7 +36,8 @@ pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
 #[derive(Debug)]
 pub struct Model {
     streamer_status: StreamerStatus,
-    player_status: Option<PlayerStatus>,
+    player_info: Option<PlayerInfo>,
+    current_track_info: Option<CurrentTrackInfo>,
     input_text: String,
     web_socket: WebSocket,
     web_socket_reconnector: Option<StreamHandle>,
@@ -57,7 +59,7 @@ pub struct DacStatus {
 }
 
 #[derive(Debug, serde::Deserialize, Clone)]
-pub struct PlayerStatus {
+pub struct CurrentTrackInfo {
     pub filename: Option<String>,
     pub name: Option<String>,
     pub album: Option<String>,
@@ -66,6 +68,9 @@ pub struct PlayerStatus {
     pub genre: Option<String>,
     pub date: Option<String>,
     pub uri: Option<String>,
+}
+#[derive(Debug, serde::Deserialize, Clone)]
+pub struct PlayerInfo {
     pub state: Option<PlayerState>,
     pub random: Option<bool>,
     pub audio_format_rate: Option<u32>,
@@ -121,8 +126,9 @@ pub enum Command {
 
 pub enum Msg {
     WebSocketOpened,
-    PlayerStatusChanged(PlayerStatus),
+    CurrentTrackInfoChanged(CurrentTrackInfo),
     StreamerStatusChanged(StreamerStatus),
+    PlayerInfoChaged(PlayerInfo),
     CloseWebSocket,
     WebSocketClosed(CloseEvent),
     WebSocketFailed,
@@ -157,10 +163,10 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
             model.web_socket_reconnector = None;
             log!("WebSocket connection is open now");
         }
-        Msg::PlayerStatusChanged(message) => {
+        Msg::CurrentTrackInfoChanged(message) => {
             model.waiting_response = false;
             let ps = message;
-            model.player_status = Some(ps.clone());
+            model.current_track_info = Some(ps.clone());
             if ps.uri.is_none() {
                 orders.perform_cmd(async {
                     if ps.album.is_some() && ps.artist.is_some() {
@@ -184,11 +190,15 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
             }
         }
         Msg::AlbumImageUpdated(image) => {
-            model.player_status.as_mut().unwrap().uri = Some(image.text);
+            model.current_track_info.as_mut().unwrap().uri = Some(image.text);
         }
         Msg::StreamerStatusChanged(message) => {
             model.waiting_response = false;
             model.streamer_status = message;
+        }
+        Msg::PlayerInfoChaged(message) => {
+            model.waiting_response = false;
+            model.player_info = Some(message);
         }
         Msg::CloseWebSocket => {
             model.web_socket_reconnector = None;
@@ -274,16 +284,21 @@ fn create_websocket(orders: &impl Orders<Msg>) -> WebSocket {
 fn decode_message(message: WebSocketMessage, msg_sender: Rc<dyn Fn(Option<Msg>)>) {
     let msg_text = message.text();
     if let Ok(msg_text) = msg_text {
-        if msg_text.contains("title") {
+        if msg_text.contains("title") || msg_text.contains("filename") {
             let msg = message
-                .json::<PlayerStatus>()
+                .json::<CurrentTrackInfo>()
                 .expect("Failed to decode WebSocket text message");
-            msg_sender(Some(Msg::PlayerStatusChanged(msg)));
+            msg_sender(Some(Msg::CurrentTrackInfoChanged(msg)));
         } else if msg_text.contains("source_player") || msg_text.contains("volume") {
             let msg = message
                 .json::<StreamerStatus>()
                 .expect("Failed to decode WebSocket text message");
             msg_sender(Some(Msg::StreamerStatusChanged(msg)));
+        } else if msg_text.contains("time") {
+            let msg = message
+                .json::<PlayerInfo>()
+                .expect("Failed to decode WebSocket text message");
+            msg_sender(Some(Msg::PlayerInfoChaged(msg)));
         }
     }
 }
@@ -327,26 +342,26 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
                 St::Background => "rgba(86, 92, 86, 0.507)",
                 St::MinHeight => "100vh"
             },
-            view_player_status(model.player_status.as_ref()),
-            view_controls(model.player_status.is_some()),
-            view_track_info(
-                model.player_status.as_ref(),
+            view_track_info(model.current_track_info.as_ref()),
+            view_controls(model.current_track_info.is_some()),
+            view_player_info_1(
                 &model.streamer_status.dac_status,
                 &model.streamer_status.selected_audio_output
             ),
+            view_player_info_2(model.player_info.as_ref())
         ]
     ]
 }
 
 fn get_background_image(model: &Model) -> String {
-    if let Some(ps) = model.player_status.as_ref() {
+    if let Some(ps) = model.current_track_info.as_ref() {
         format!("url({})", ps.uri.as_ref().map_or("", |f| f)).to_string()
     } else {
         String::new()
     }
 }
 
-fn view_player_status(status: Option<&PlayerStatus>) -> Node<Msg> {
+fn view_track_info(status: Option<&CurrentTrackInfo>) -> Node<Msg> {
     if let Some(ps) = status {
         div![
             style! {
@@ -362,6 +377,16 @@ fn view_player_status(status: Option<&PlayerStatus>) -> Node<Msg> {
                         p![
                             C!["is-size-3 has-text-light has-background-dark-transparent"],
                             ps.title.as_ref().map_or("NA", |f| f)
+                        ],
+                    ],
+                ]),
+                IF!(ps.name.is_some() && ps.name != ps.title =>
+                div![
+                    C!["level-item"],
+                    div![
+                        p![
+                            C!["has-text-light has-background-dark-transparent"],
+                            ps.name.as_ref().map_or("NA", |f| f)
                         ],
                     ],
                 ]),
@@ -385,6 +410,17 @@ fn view_player_status(status: Option<&PlayerStatus>) -> Node<Msg> {
                         ],
                     ],
                 ]),
+                if ps.title.is_none() && ps.filename.is_some() {
+                    div![
+                        C!["level-item"],
+                        div![p![
+                            C!["has-text-light has-background-dark-transparent"],
+                            ps.filename.as_ref().map_or("NA", |f| f)
+                        ],],
+                    ]
+                } else {
+                    empty!()
+                },
             ],
             nav![
                 C!["level", "is-flex-direction-column"],
@@ -479,36 +515,37 @@ fn view_controls(playing: bool) -> Node<Msg> {
         ]
     ]
 }
-fn view_track_info(
-    player_status: Option<&PlayerStatus>,
-    dac_status: &DacStatus,
-    audio_out: &AudioOut,
-) -> Node<Msg> {
-    if let Some(ps) = player_status {
+fn view_player_info_1(dac_status: &DacStatus, audio_out: &AudioOut) -> Node<Msg> {
+    div![
+        C!["transparent"],
+        div![p![
+            C!("has-text-light has-background-dark-transparent"),
+            format!("Volume: {}", dac_status.volume)
+        ]],
+        div![div![p![
+            C!["has-text-light has-background-dark-transparent"],
+            format!("Audio output: {:?}", audio_out)
+        ],],],
+        div![div![p![
+            C!["has-text-light has-background-dark-transparent"],
+            format!("Dac filter: {:?}", dac_status.filter)
+        ],],],
+    ]
+}
+fn view_player_info_2(player_info: Option<&PlayerInfo>) -> Node<Msg> {
+    if let Some(pi) = player_info {
         div![
             C!["transparent"],
-            div![p![ps.time.as_ref().map_or(String::from(""), |t| format!(
+            div![p![pi.time.as_ref().map_or(String::from(""), |t| format!(
                 "Time:{}/{}",
                 t.0, t.1
             ))]],
-            div![p![
-                C!("has-text-light has-background-dark-transparent"),
-                format!("Volume: {}", dac_status.volume)
-            ]],
-            div![div![p![
-                C!["has-text-light has-background-dark-transparent"],
-                format!("Audio output: {:?}", audio_out)
-            ],],],
-            div![div![p![
-                C!["has-text-light has-background-dark-transparent"],
-                format!("Dac filter: {:?}", dac_status.filter)
-            ],],],
-            IF!(ps.audio_format_rate.is_some() =>
+            IF!(pi.audio_format_rate.is_some() =>
             div![
                 div![p![
                 C!["has-text-light has-background-dark-transparent"],
-                format!("Freq: {} | Bit: {} | Ch: {}", ps.audio_format_rate.map_or(0, |f|f),
-                ps.audio_format_bit.map_or(0, |f|f), ps.audio_format_channels.map_or(0,|f|f))
+                format!("Freq: {} | Bit: {} | Ch: {}", pi.audio_format_rate.map_or(0, |f|f),
+                pi.audio_format_bit.map_or(0, |f|f), pi.audio_format_channels.map_or(0,|f|f))
             ]]])
         ]
     } else {
