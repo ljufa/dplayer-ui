@@ -344,18 +344,18 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
             },
             view_track_info(model.current_track_info.as_ref()),
             view_controls(model.player_info.as_ref()),
-            view_player_info_1(
+            view_player_info(
                 &model.streamer_status.dac_status,
-                &model.streamer_status.selected_audio_output
+                &model.streamer_status.selected_audio_output,
+                model.player_info.as_ref()
             ),
-            view_player_info_2(model.player_info.as_ref())
         ]
     ]
 }
 
 fn get_background_image(model: &Model) -> String {
     if let Some(ps) = model.current_track_info.as_ref() {
-        format!("url({})", ps.uri.as_ref().map_or("", |f| f)).to_string()
+        format!("url({})", ps.uri.as_ref().map_or("", |f| f))
     } else {
         String::new()
     }
@@ -519,7 +519,11 @@ fn view_controls(player_info: Option<&PlayerInfo>) -> Node<Msg> {
         ]
     ]
 }
-fn view_player_info_1(dac_status: &DacStatus, audio_out: &AudioOut) -> Node<Msg> {
+fn view_player_info(
+    dac_status: &DacStatus,
+    audio_out: &AudioOut,
+    player_info: Option<&PlayerInfo>,
+) -> Node<Msg> {
     div![
         C!["transparent"],
         div![p![
@@ -534,32 +538,35 @@ fn view_player_info_1(dac_status: &DacStatus, audio_out: &AudioOut) -> Node<Msg>
             C!["has-text-light has-background-dark-transparent"],
             format!("Dac filter: {:?}", dac_status.filter)
         ],],],
-    ]
-}
-
-fn view_player_info_2(player_info: Option<&PlayerInfo>) -> Node<Msg> {
-    if let Some(pi) = player_info {
-        div![
-            C!["transparent"],
-            div![p![
-                C!["has-text-light has-background-dark-transparent"],
-                pi.time.as_ref().map_or(String::from(""), |t| format!(
-                    "Time: {}s/{}s",
-                    t.0.as_secs(),
-                    t.1.as_secs()
-                ))
-            ]],
-            IF!(pi.audio_format_rate.is_some() =>
+        if let Some(pi) = player_info {
             div![
                 div![p![
-                C!["has-text-light has-background-dark-transparent"],
-                format!("Freq: {} | Bit: {} | Ch: {}", pi.audio_format_rate.map_or(0, |f|f),
-                pi.audio_format_bit.map_or(0, |f|f), pi.audio_format_channels.map_or(0,|f|f))
-            ]]])
-        ]
-    } else {
-        empty!()
-    }
+                    C!["has-text-light has-background-dark-transparent"],
+                    pi.time.as_ref().map_or(String::from(""), |t| format!(
+                        "Time: {}s/{}s",
+                        t.0.as_secs(),
+                        t.1.as_secs()
+                    ))
+                ]],
+                IF!(pi.audio_format_rate.is_some() =>
+                div![
+                    div![p![
+                    C!["has-text-light has-background-dark-transparent"],
+                    format!("Freq: {} | Bit: {} | Ch: {}", pi.audio_format_rate.map_or(0, |f|f),
+                    pi.audio_format_bit.map_or(0, |f|f), pi.audio_format_channels.map_or(0,|f|f))
+                ]]]),
+                div![div![p![
+                    C!["has-text-light has-background-dark-transparent"],
+                    format!(
+                        "Random: {}",
+                        pi.random.map_or("NO", |f| if f { "YES" } else { "NO" })
+                    )
+                ],],],
+            ]
+        } else {
+            empty!()
+        }
+    ]
 }
 
 pub fn view_player_switch(model: &Model) -> Node<Msg> {
@@ -583,7 +590,7 @@ pub fn view_player_switch(model: &Model) -> Node<Msg> {
             div![
                 C!["level-item"],
                 button![
-                    IF!(pt == PlayerType::SPF=> attrs!{"disabled"=>true}),
+                    IF!(true || pt == PlayerType::SPF=> attrs!{"disabled"=>true}),
                     C!["button", "is-small"],
                     span![C!("icon"), i![C!("fab fa-spotify")]],
                     span!("Spotify"),
