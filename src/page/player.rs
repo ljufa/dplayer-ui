@@ -1,7 +1,7 @@
 use seed::{prelude::*, *};
 use strum_macros::IntoStaticStr;
 
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
 
 const WS_URL: &str = "ws://192.168.5.59:8000/api/player";
 
@@ -76,7 +76,7 @@ pub struct PlayerInfo {
     pub audio_format_rate: Option<u32>,
     pub audio_format_bit: Option<u8>,
     pub audio_format_channels: Option<u8>,
-    pub time: Option<(String, String)>,
+    pub time: Option<(Duration, Duration)>,
 }
 
 #[derive(Debug, PartialEq, serde::Deserialize, IntoStaticStr, Clone)]
@@ -343,7 +343,7 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
                 St::MinHeight => "100vh"
             },
             view_track_info(model.current_track_info.as_ref()),
-            view_controls(model.current_track_info.is_some()),
+            view_controls(model.player_info.as_ref()),
             view_player_info_1(
                 &model.streamer_status.dac_status,
                 &model.streamer_status.selected_audio_output
@@ -450,8 +450,12 @@ fn view_track_info(status: Option<&CurrentTrackInfo>) -> Node<Msg> {
         empty!()
     }
 }
-fn view_controls(playing: bool) -> Node<Msg> {
-    // let player_status = status.player_status.as_ref();
+fn view_controls(player_info: Option<&PlayerInfo>) -> Node<Msg> {
+    let playing = player_info.map_or(false, |f| {
+        f.state
+            .as_ref()
+            .map_or(false, |f| *f == PlayerState::PLAYING)
+    });
     div![
         C!["transparent"],
         nav![
@@ -463,7 +467,7 @@ fn view_controls(playing: bool) -> Node<Msg> {
                     div![
                         C!["level-item"],
                         button![
-                            //IF!(playing => attrs!{"disabled"=>true}),
+                            IF!(playing => attrs!{"disabled"=>true}),
                             C!["button"],
                             ev(Ev::Click, |_| Msg::SendCommand(Command::Play)),
                             span![C!("icon"), i![C!("fas fa-play")]]
@@ -472,7 +476,7 @@ fn view_controls(playing: bool) -> Node<Msg> {
                     div![
                         C!["level-item"],
                         button![
-                            //IF!(!playing => attrs!{"disabled"=>true}),
+                            IF!(!playing => attrs!{"disabled"=>true}),
                             C!["button"],
                             span![C!("icon"), i![C!("fas fa-stop")]],
                             ev(Ev::Click, |_| Msg::SendCommand(Command::Pause))
@@ -532,14 +536,19 @@ fn view_player_info_1(dac_status: &DacStatus, audio_out: &AudioOut) -> Node<Msg>
         ],],],
     ]
 }
+
 fn view_player_info_2(player_info: Option<&PlayerInfo>) -> Node<Msg> {
     if let Some(pi) = player_info {
         div![
             C!["transparent"],
-            div![p![pi.time.as_ref().map_or(String::from(""), |t| format!(
-                "Time:{}/{}",
-                t.0, t.1
-            ))]],
+            div![p![
+                C!["has-text-light has-background-dark-transparent"],
+                pi.time.as_ref().map_or(String::from(""), |t| format!(
+                    "Time: {}s/{}s",
+                    t.0.as_secs(),
+                    t.1.as_secs()
+                ))
+            ]],
             IF!(pi.audio_format_rate.is_some() =>
             div![
                 div![p![
