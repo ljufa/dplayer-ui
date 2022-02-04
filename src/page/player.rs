@@ -1,7 +1,8 @@
 use seed::{prelude::*, *};
-use strum_macros::IntoStaticStr;
+use strum::IntoEnumIterator;
+use strum_macros::{EnumIter, EnumString, IntoStaticStr};
 
-use std::{rc::Rc, time::Duration};
+use std::{rc::Rc, str::FromStr, time::Duration};
 
 const WS_URL: &str = "ws://192.168.5.59:8000/api/player";
 
@@ -72,7 +73,7 @@ pub struct CurrentTrackInfo {
 #[derive(Debug, serde::Deserialize, Clone)]
 pub struct PlayerInfo {
     pub state: Option<PlayerState>,
-    pub random: Option<bool>,
+    pub random: bool,
     pub audio_format_rate: Option<u32>,
     pub audio_format_bit: Option<u8>,
     pub audio_format_channels: Option<u8>,
@@ -91,7 +92,9 @@ pub enum AudioOut {
     SPKR,
     HEAD,
 }
-#[derive(Debug, serde::Deserialize, serde::Serialize, IntoStaticStr)]
+#[derive(
+    Debug, serde::Deserialize, serde::Serialize, PartialEq, EnumString, IntoStaticStr, EnumIter,
+)]
 pub enum FilterType {
     SharpRollOff,
     SlowRollOff,
@@ -110,18 +113,18 @@ pub enum PlayerType {
 pub enum Command {
     VolUp,
     VolDown,
-    Filter(FilterType),
-    Sound(u8),
     Next,
     Prev,
     Pause,
-    Stop,
     Play,
-    TogglePlayer,
+    RandomToggle,
+
+    SwitchToPlayer(PlayerType),
+    Filter(FilterType),
+    Sound(u8),
     PowerOff,
     ChangeAudioOutput,
     Rewind(i8),
-    SwitchToPlayer(PlayerType),
 }
 
 pub enum Msg {
@@ -133,10 +136,8 @@ pub enum Msg {
     WebSocketClosed(CloseEvent),
     WebSocketFailed,
     ReconnectWebSocket(usize),
-    InputTextChanged(String),
     SendCommand(Command),
     AlbumImageUpdated(Image),
-    Nop,
 }
 #[derive(Debug, serde::Deserialize)]
 pub struct AlbumInfo {
@@ -234,7 +235,7 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
             log!("Reconnect attempt:", retries);
             model.web_socket = create_websocket(orders);
         }
-        Msg::InputTextChanged(text) => {}
+
         Msg::SendCommand(cmd) => {
             match cmd {
                 Command::SwitchToPlayer(_) => model.waiting_response = true,
@@ -303,6 +304,14 @@ fn decode_message(message: WebSocketMessage, msg_sender: Rc<dyn Fn(Option<Msg>)>
     }
 }
 
+fn get_background_image(model: &Model) -> String {
+    if let Some(ps) = model.current_track_info.as_ref() {
+        format!("url({})", ps.uri.as_ref().map_or("", |f| f))
+    } else {
+        String::new()
+    }
+}
+
 // ------ ------
 //     View
 // ------ ------
@@ -344,6 +353,7 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
             },
             view_track_info(model.current_track_info.as_ref()),
             view_controls(model.player_info.as_ref()),
+            view_controls_down(model.player_info.as_ref(), &model.streamer_status),
             view_player_info(
                 &model.streamer_status.dac_status,
                 &model.streamer_status.selected_audio_output,
@@ -351,14 +361,6 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
             ),
         ]
     ]
-}
-
-fn get_background_image(model: &Model) -> String {
-    if let Some(ps) = model.current_track_info.as_ref() {
-        format!("url({})", ps.uri.as_ref().map_or("", |f| f))
-    } else {
-        String::new()
-    }
 }
 
 fn view_track_info(status: Option<&CurrentTrackInfo>) -> Node<Msg> {
@@ -515,7 +517,69 @@ fn view_controls(player_info: Option<&PlayerInfo>) -> Node<Msg> {
                         ]
                     ],
                 ],
-            ],
+            ]
+        ]
+    ]
+}
+fn view_controls_down(
+    player_info: Option<&PlayerInfo>,
+    streamer_status: &StreamerStatus,
+) -> Node<Msg> {
+    let audio_out = match streamer_status.selected_audio_output {
+        AudioOut::SPKR => "speaker",
+        AudioOut::HEAD => "headphones",
+    };
+    let shuffle = player_info.map_or(
+        "shuffle",
+        |r| if r.random { "shuffle_on" } else { "shuffle" },
+    );
+
+    div![
+        C!["transparent"],
+        nav![
+            C!["level is-mobile"],
+            div![
+                C!["level-left"],
+                div![
+                    C!["field", "is-grouped"],
+                    div![
+                        C!["level-item"],
+                        button![
+                            C!["button"],
+                            ev(Ev::Click, |_| Msg::SendCommand(Command::RandomToggle)),
+                            span![C!("icon"), i![C!("material-icons"), shuffle]]
+                        ]
+                    ],
+                    div![
+                        C!["level-item"],
+                        button![
+                            C!["button"],
+                            span![C!("icon"), i![C!("material-icons"), audio_out]],
+                            ev(Ev::Click, |_| Msg::SendCommand(Command::ChangeAudioOutput))
+                        ]
+                    ],
+                    div![
+                        C!["level-item"],
+                        // label!["DAC Chip:", C!["label"]],
+                        div![
+                            C!["select"],
+                            select![
+                                FilterType::iter()
+                                    .map(|f| {
+                                        let fs: &'static str = f.into();
+                                        fs
+                                    })
+                                    .map(|fs| option![attrs! {At::Value => fs }, fs]),
+                                input_ev(Ev::Change, move |selected| Msg::SendCommand(
+                                    Command::Filter(
+                                        FilterType::from_str(selected.as_str()).unwrap()
+                                    )
+                                )),
+                            ],
+                        ],
+                    ],
+                ],
+            ]
         ]
     ]
 }
@@ -557,10 +621,7 @@ fn view_player_info(
                 ]]]),
                 div![div![p![
                     C!["has-text-light has-background-dark-transparent"],
-                    format!(
-                        "Random: {}",
-                        pi.random.map_or("NO", |f| if f { "YES" } else { "NO" })
-                    )
+                    format!("Random: {}", pi.random)
                 ],],],
             ]
         } else {

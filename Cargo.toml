@@ -13,5 +13,5 @@ serde = "1.0.125"
 uuid = { version = "0.8.2", features = ["serde", "v4", "wasm-bindgen"] }
 indexmap = { version = "1.6.1", features = ["serde-1"] }
 enclose = "1.1.8"
-strum = "0.20"
-strum_macros = "0.20"
+strum = "0.23"
+strum_macros = "0.23"
