@@ -379,20 +379,22 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
                 St::Background => "rgba(86, 92, 86, 0.507)",
                 St::MinHeight => "100vh"
             },
-            view_track_info(model.current_track_info.as_ref()),
-            view_track_progress_bar(model.player_info.as_ref()),
-            view_controls(model.player_info.as_ref()),
-            view_controls_down(model.player_info.as_ref(), &model.streamer_status),
-            view_player_info(
-                &model.streamer_status.dac_status,
-                &model.streamer_status.selected_audio_output,
+            view_track_info(
+                model.current_track_info.as_ref(),
                 model.player_info.as_ref()
             ),
+            view_track_progress_bar(model.player_info.as_ref()),
+            view_volume_slider(&model.streamer_status.dac_status),
+            view_controls(model.player_info.as_ref()),
+            view_controls_down(model.player_info.as_ref(), &model.streamer_status),
         ]
     ]
 }
 
-fn view_track_info(status: Option<&CurrentTrackInfo>) -> Node<Msg> {
+fn view_track_info(
+    status: Option<&CurrentTrackInfo>,
+    player_info: Option<&PlayerInfo>,
+) -> Node<Msg> {
     if let Some(ps) = status {
         div![
             style! {
@@ -475,6 +477,19 @@ fn view_track_info(status: Option<&CurrentTrackInfo>) -> Node<Msg> {
                         ],
                     ],
                 ]),
+                if let Some(pi) = player_info {
+                    div![
+                        C!["level-item"],
+                        IF!(pi.audio_format_rate.is_some() =>
+                            div![p![
+                            C!["has-text-light has-background-dark-transparent"],
+                            format!("Freq: {} | Bit: {} | Ch: {}", pi.audio_format_rate.map_or(0, |f|f),
+                            pi.audio_format_bit.map_or(0, |f|f), pi.audio_format_channels.map_or(0,|f|f))
+                        ]]),
+                    ]
+                } else {
+                    empty!()
+                }
             ],
         ]
     } else {
@@ -641,15 +656,11 @@ fn view_controls_down(
         ]
     ]
 }
-fn view_player_info(
-    dac_status: &DacStatus,
-    audio_out: &AudioOut,
-    player_info: Option<&PlayerInfo>,
-) -> Node<Msg> {
+fn view_volume_slider(dac_status: &DacStatus) -> Node<Msg> {
     div![
         C!["transparent"],
-        div![div![p![
-            C!["has-text-light has-background-dark-transparent"],
+        div![div![
+            C!["has-text-light has-background-dark-transparent field is-grouped"],
             label!["Volume:"],
             input![
                 C!["slider is-fullwidth is-info"],
@@ -662,40 +673,7 @@ fn view_player_info(
                     Command::SetVol(u8::from_str(selected.as_str()).unwrap())
                 )),
             ]
-        ]]],
-        // div![div![p![
-        //     C!["has-text-light has-background-dark-transparent"],
-        //     format!("Audio output: {:?}", audio_out)
-        // ],],],
-        // div![div![p![
-        //     C!["has-text-light has-background-dark-transparent"],
-        //     format!("Dac filter: {:?}", dac_status.filter)
-        // ],],],
-        if let Some(pi) = player_info {
-            div![
-                // div![p![
-                //     C!["has-text-light has-background-dark-transparent"],
-                //     pi.time.as_ref().map_or(String::from(""), |t| format!(
-                //         "Time: {}s/{}s",
-                //         t.0.as_secs(),
-                //         t.1.as_secs()
-                //     ))
-                // ]],
-                IF!(pi.audio_format_rate.is_some() =>
-                div![
-                    div![p![
-                    C!["has-text-light has-background-dark-transparent"],
-                    format!("Freq: {} | Bit: {} | Ch: {}", pi.audio_format_rate.map_or(0, |f|f),
-                    pi.audio_format_bit.map_or(0, |f|f), pi.audio_format_channels.map_or(0,|f|f))
-                ]]]),
-                // div![div![p![
-                //     C!["has-text-light has-background-dark-transparent"],
-                //     format!("Random: {}", pi.random)
-                // ],],],
-            ]
-        } else {
-            empty!()
-        }
+        ]],
     ]
 }
 
