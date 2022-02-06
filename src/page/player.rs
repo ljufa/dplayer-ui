@@ -384,8 +384,8 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
                 model.player_info.as_ref()
             ),
             view_track_progress_bar(model.player_info.as_ref()),
-            view_volume_slider(&model.streamer_status.dac_status),
             view_controls(model.player_info.as_ref()),
+            view_volume_slider(&model.streamer_status.dac_status),
             view_controls_down(model.player_info.as_ref(), &model.streamer_status),
         ]
     ]
@@ -661,9 +661,9 @@ fn view_volume_slider(dac_status: &DacStatus) -> Node<Msg> {
         C!["transparent"],
         div![div![
             C!["has-text-light has-background-dark-transparent field is-grouped"],
-            label!["Volume:"],
+            label![format!("Volume ({} of {}):", dac_status.volume, 255)],
             input![
-                C!["slider is-fullwidth is-info"],
+                C!["slider is-info"],
                 attrs! {"value"=> dac_status.volume},
                 attrs! {"step"=> 1},
                 attrs! {"max"=> 255},
