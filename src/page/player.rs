@@ -402,7 +402,7 @@ fn view_track_info(
             },
             C!["transparent"],
             nav![
-                C!["leve l", "is-flex-direction-column"],
+                C!["level", "is-flex-direction-column"],
                 IF!(ps.title.is_some() =>
                 div![
                     C!["level-item has-text-centered"],
@@ -661,18 +661,19 @@ fn view_volume_slider(dac_status: &DacStatus) -> Node<Msg> {
         C!["transparent"],
         div![div![
             C!["has-text-light has-background-dark-transparent field is-grouped"],
-            label![format!("Volume ({} of {}):", dac_status.volume, 255)],
+            label!["Volume:"],
             input![
-                C!["slider is-info"],
+                C!["slider is-fullwidth is-success"],
                 attrs! {"value"=> dac_status.volume},
                 attrs! {"step"=> 1},
                 attrs! {"max"=> 255},
-                attrs! {"min"=> 0},
+                attrs! {"min"=> 140},
                 attrs! {"type"=> "range"},
                 input_ev(Ev::Change, move |selected| Msg::SendCommand(
                     Command::SetVol(u8::from_str(selected.as_str()).unwrap())
                 )),
-            ]
+            ],
+            span![format!("{}/{}", dac_status.volume, 255)]
         ]],
     ]
 }
