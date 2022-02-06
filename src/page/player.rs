@@ -640,9 +640,15 @@ fn view_controls_down(
                                 FilterType::iter()
                                     .map(|f| {
                                         let fs: &'static str = f.into();
-                                        fs
+                                        let is_selected = FilterType::from_str(fs).unwrap()
+                                            == streamer_status.dac_status.filter;
+                                        (fs, is_selected)
                                     })
-                                    .map(|fs| option![attrs! {At::Value => fs }, fs]),
+                                    .map(|(fs, is_selected)| option![
+                                        attrs! {At::Value => fs },
+                                        IF!(is_selected => attrs!{At::Selected => ""}),
+                                        fs
+                                    ]),
                                 input_ev(Ev::Change, move |selected| Msg::SendCommand(
                                     Command::Filter(
                                         FilterType::from_str(selected.as_str()).unwrap()
