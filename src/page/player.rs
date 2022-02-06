@@ -2,7 +2,12 @@ use seed::{prelude::*, *};
 use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, EnumString, IntoStaticStr};
 
-use std::{rc::Rc, str::FromStr, time::Duration};
+use std::{
+    fmt::{Display, Write},
+    rc::Rc,
+    str::FromStr,
+    time::Duration,
+};
 
 const WS_URL: &str = "ws://192.168.5.59:8000/api/player";
 
@@ -80,6 +85,27 @@ pub struct PlayerInfo {
     pub time: Option<(Duration, Duration)>,
 }
 
+impl PlayerInfo {
+    pub fn format_time(&self) -> String {
+        if let Some(time) = self.time {
+            return format!("{} / {}", dur_to_string(time.0), dur_to_string(time.1));
+        } else {
+            return "00:00:00 / 00:00:00".to_string();
+        }
+    }
+}
+fn dur_to_string(duration: Duration) -> String {
+    let mut result = "00:00:00".to_string();
+    let secs = duration.as_secs();
+    if secs > 0 {
+        let seconds = secs % 60;
+        let minutes = (secs / 60) % 60;
+        let hours = (secs / 60) / 60;
+        result = format!("{:0>2}:{:0>2}:{:0>2}", hours, minutes, seconds).to_string();
+    }
+    return result;
+}
+
 #[derive(Debug, PartialEq, serde::Deserialize, IntoStaticStr, Clone)]
 pub enum PlayerState {
     PLAYING,
@@ -121,6 +147,7 @@ pub enum Command {
 
     SwitchToPlayer(PlayerType),
     Filter(FilterType),
+    SetVol(u8),
     Sound(u8),
     PowerOff,
     ChangeAudioOutput,
@@ -239,6 +266,7 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
         Msg::SendCommand(cmd) => {
             match cmd {
                 Command::SwitchToPlayer(_) => model.waiting_response = true,
+                Command::SetVol(vol) => model.streamer_status.dac_status.volume = vol,
                 _ => (),
             }
 
@@ -352,6 +380,7 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
                 St::MinHeight => "100vh"
             },
             view_track_info(model.current_track_info.as_ref()),
+            view_track_progress_bar(model.player_info.as_ref()),
             view_controls(model.player_info.as_ref()),
             view_controls_down(model.player_info.as_ref(), &model.streamer_status),
             view_player_info(
@@ -371,7 +400,7 @@ fn view_track_info(status: Option<&CurrentTrackInfo>) -> Node<Msg> {
             },
             C!["transparent"],
             nav![
-                C!["level", "is-flex-direction-column"],
+                C!["leve l", "is-flex-direction-column"],
                 IF!(ps.title.is_some() =>
                 div![
                     C!["level-item has-text-centered"],
@@ -448,6 +477,36 @@ fn view_track_info(status: Option<&CurrentTrackInfo>) -> Node<Msg> {
                 ]),
             ],
         ]
+    } else {
+        empty!()
+    }
+}
+fn view_track_progress_bar(player_info: Option<&PlayerInfo>) -> Node<Msg> {
+    if let Some(player_info) = player_info {
+        if let Some((current, total)) = player_info.time {
+            div![div![
+                style! {
+                    St::Padding => "1.2rem",
+                },
+                C!["has-text-centered"],
+                span![
+                    C![
+                        "is-size-6",
+                        "has-text-light",
+                        "has-background-dark-transparent"
+                    ],
+                    player_info.format_time()
+                ],
+                progress![
+                    C!["progress", "is-small", "is-info"],
+                    attrs! {"value"=> current.as_secs()},
+                    attrs! {"max"=> total.as_secs()},
+                    current.as_secs()
+                ],
+            ],]
+        } else {
+            empty!()
+        }
     } else {
         empty!()
     }
@@ -545,7 +604,7 @@ fn view_controls_down(
                     div![
                         C!["level-item"],
                         button![
-                            C!["button"],
+                            C!["button", IF!(shuffle == "shuffle_on" => "is-active")],
                             ev(Ev::Click, |_| Msg::SendCommand(Command::RandomToggle)),
                             span![C!("icon"), i![C!("material-icons"), shuffle]]
                         ]
@@ -560,7 +619,6 @@ fn view_controls_down(
                     ],
                     div![
                         C!["level-item"],
-                        // label!["DAC Chip:", C!["label"]],
                         div![
                             C!["select"],
                             select![
@@ -590,28 +648,39 @@ fn view_player_info(
 ) -> Node<Msg> {
     div![
         C!["transparent"],
-        div![p![
-            C!("has-text-light has-background-dark-transparent"),
-            format!("Volume: {}", dac_status.volume)
-        ]],
         div![div![p![
             C!["has-text-light has-background-dark-transparent"],
-            format!("Audio output: {:?}", audio_out)
-        ],],],
-        div![div![p![
-            C!["has-text-light has-background-dark-transparent"],
-            format!("Dac filter: {:?}", dac_status.filter)
-        ],],],
+            label!["Volume:"],
+            input![
+                C!["slider is-fullwidth is-info"],
+                attrs! {"value"=> dac_status.volume},
+                attrs! {"step"=> 1},
+                attrs! {"max"=> 255},
+                attrs! {"min"=> 0},
+                attrs! {"type"=> "range"},
+                input_ev(Ev::Change, move |selected| Msg::SendCommand(
+                    Command::SetVol(u8::from_str(selected.as_str()).unwrap())
+                )),
+            ]
+        ]]],
+        // div![div![p![
+        //     C!["has-text-light has-background-dark-transparent"],
+        //     format!("Audio output: {:?}", audio_out)
+        // ],],],
+        // div![div![p![
+        //     C!["has-text-light has-background-dark-transparent"],
+        //     format!("Dac filter: {:?}", dac_status.filter)
+        // ],],],
         if let Some(pi) = player_info {
             div![
-                div![p![
-                    C!["has-text-light has-background-dark-transparent"],
-                    pi.time.as_ref().map_or(String::from(""), |t| format!(
-                        "Time: {}s/{}s",
-                        t.0.as_secs(),
-                        t.1.as_secs()
-                    ))
-                ]],
+                // div![p![
+                //     C!["has-text-light has-background-dark-transparent"],
+                //     pi.time.as_ref().map_or(String::from(""), |t| format!(
+                //         "Time: {}s/{}s",
+                //         t.0.as_secs(),
+                //         t.1.as_secs()
+                //     ))
+                // ]],
                 IF!(pi.audio_format_rate.is_some() =>
                 div![
                     div![p![
@@ -619,10 +688,10 @@ fn view_player_info(
                     format!("Freq: {} | Bit: {} | Ch: {}", pi.audio_format_rate.map_or(0, |f|f),
                     pi.audio_format_bit.map_or(0, |f|f), pi.audio_format_channels.map_or(0,|f|f))
                 ]]]),
-                div![div![p![
-                    C!["has-text-light has-background-dark-transparent"],
-                    format!("Random: {}", pi.random)
-                ],],],
+                // div![div![p![
+                //     C!["has-text-light has-background-dark-transparent"],
+                //     format!("Random: {}", pi.random)
+                // ],],],
             ]
         } else {
             empty!()
