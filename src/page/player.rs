@@ -496,10 +496,11 @@ fn view_track_info(
         empty!()
     }
 }
+
 fn view_track_progress_bar(player_info: Option<&PlayerInfo>) -> Node<Msg> {
     if let Some(player_info) = player_info {
         if let Some((current, total)) = player_info.time {
-            div![div![
+            div![
                 style! {
                     St::Padding => "1.2rem",
                 },
@@ -513,12 +514,12 @@ fn view_track_progress_bar(player_info: Option<&PlayerInfo>) -> Node<Msg> {
                     player_info.format_time()
                 ],
                 progress![
-                    C!["progress", "is-small", "is-info"],
+                    C!["progress", "is-small", "is-success"],
                     attrs! {"value"=> current.as_secs()},
                     attrs! {"max"=> total.as_secs()},
                     current.as_secs()
                 ],
-            ],]
+            ]
         } else {
             empty!()
         }
@@ -595,6 +596,7 @@ fn view_controls(player_info: Option<&PlayerInfo>) -> Node<Msg> {
         ]
     ]
 }
+
 fn view_controls_down(
     player_info: Option<&PlayerInfo>,
     streamer_status: &StreamerStatus,
@@ -662,25 +664,35 @@ fn view_controls_down(
         ]
     ]
 }
+
 fn view_volume_slider(dac_status: &DacStatus) -> Node<Msg> {
     div![
-        C!["transparent"],
-        div![div![
-            C!["has-text-light has-background-dark-transparent field is-grouped"],
-            label!["Volume:"],
-            input![
-                C!["slider is-fullwidth is-success"],
-                attrs! {"value"=> dac_status.volume},
-                attrs! {"step"=> 1},
-                attrs! {"max"=> 255},
-                attrs! {"min"=> 140},
-                attrs! {"type"=> "range"},
-                input_ev(Ev::Change, move |selected| Msg::SendCommand(
-                    Command::SetVol(u8::from_str(selected.as_str()).unwrap())
-                )),
+        style! {
+            St::Padding => "1.2rem",
+        },
+        C!["has-text-centered"],
+        span![
+            C![
+                "is-size-6",
+                "has-text-light",
+                "has-background-dark-transparent"
             ],
-            span![format!("{}/{}", dac_status.volume, 255)]
-        ]],
+            format!("Volume: {}/{}", dac_status.volume, 255)
+        ],
+        input![
+            C!["slider", "is-fullwidth", "is-success"],
+            style! {
+                St::PaddingRight => "1.2rem"
+            },
+            attrs! {"value"=> dac_status.volume},
+            attrs! {"step"=> 1},
+            attrs! {"max"=> 255},
+            attrs! {"min"=> 140},
+            attrs! {"type"=> "range"},
+            input_ev(Ev::Change, move |selected| Msg::SendCommand(
+                Command::SetVol(u8::from_str(selected.as_str()).unwrap())
+            )),
+        ],
     ]
 }
 

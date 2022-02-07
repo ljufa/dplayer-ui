@@ -48,6 +48,7 @@ pub struct Settings {
 }
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct SpotifySettings {
+    pub enabled: bool,
     pub device_name: String,
     pub username: String,
     pub password: String,
@@ -56,6 +57,7 @@ pub struct SpotifySettings {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct LmsSettings {
+    pub enabled: bool,
     pub cli_port: u32,
     pub server_host: String,
     pub server_port: u32,
@@ -63,6 +65,7 @@ pub struct LmsSettings {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct MpdSettings {
+    pub enabled: bool,
     pub server_host: String,
     pub server_port: u32,
 }
