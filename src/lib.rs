@@ -3,6 +3,7 @@ use seed::{prelude::*, *};
 mod page;
 
 const SETTINGS: &str = "settings";
+const PLAYER: &str = "player";
 const FIRST_SETUP: &str = "setup";
 
 // ------ ------
@@ -13,7 +14,7 @@ fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
     orders.subscribe(Msg::UrlChanged);
     Model {
         menu_visible: false,
-        base_url: url.to_base_url(),
+        base_url: url.to_hash_base_url(),
         page: Page::init(url, orders),
     }
 }
@@ -46,13 +47,13 @@ enum Page {
 }
 impl Page {
     fn init(mut url: Url, orders: &mut impl Orders<Msg>) -> Self {
-        match url.remaining_path_parts().as_slice() {
+        match url.remaining_hash_path_parts().as_slice() {
             [FIRST_SETUP] => Self::Home,
             [SETTINGS] => Self::Settings(page::settings::init(
                 url,
                 &mut orders.proxy(Msg::SettingsMsg),
             )),
-            [] => Self::Player(page::player::init(url, &mut orders.proxy(Msg::PlayerMsg))),
+            [PLAYER] => Self::Player(page::player::init(url, &mut orders.proxy(Msg::PlayerMsg))),
 
             _ => Self::NotFound,
         }
@@ -69,10 +70,10 @@ impl<'a> Urls<'a> {
         self.base_url()
     }
     fn settings(self) -> Url {
-        self.base_url().add_path_part(SETTINGS)
+        self.base_url().add_hash_path_part(SETTINGS)
     }
     fn player(self) -> Url {
-        self.base_url()
+        self.base_url().add_hash_path_part(PLAYER)
     }
 }
 

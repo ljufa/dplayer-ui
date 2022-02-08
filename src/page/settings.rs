@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use indexmap::IndexMap;
 use seed::{prelude::*, *};
 
@@ -20,10 +22,6 @@ pub(crate) fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
     });
     Model {
         settings: Settings::default(),
-        dac_enabled: false,
-        spotify_enabled: false,
-        lms_enabled: false,
-        mpd_enabled: false,
     }
 }
 
@@ -32,21 +30,18 @@ pub(crate) fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
 #[derive(Debug)]
 pub struct Model {
     settings: Settings,
-    dac_enabled: bool,
-    spotify_enabled: bool,
-    lms_enabled: bool,
-    mpd_enabled: bool,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
-    pub spotify_settings: Option<SpotifySettings>,
-    pub lms_settings: Option<LmsSettings>,
-    pub mpd_settings: Option<MpdSettings>,
-    pub dac_settings: Option<DacSettings>,
+    pub spotify_settings: SpotifySettings,
+    pub lms_settings: LmsSettings,
+    pub mpd_settings: MpdSettings,
+    pub dac_settings: DacSettings,
     pub alsa_settings: AlsaSettings,
+    pub ir_control_settings: IRInputControlerSettings,
 }
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct SpotifySettings {
     pub enabled: bool,
     pub device_name: String,
@@ -55,7 +50,7 @@ pub struct SpotifySettings {
     pub bitrate: u16,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct LmsSettings {
     pub enabled: bool,
     pub cli_port: u32,
@@ -63,34 +58,45 @@ pub struct LmsSettings {
     pub server_port: u32,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct MpdSettings {
     pub enabled: bool,
     pub server_host: String,
     pub server_port: u32,
 }
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct AlsaSettings {
     pub device_name: String,
+    #[serde(skip_deserializing)]
+    pub available_alsa_pcm_devices: HashMap<String, String>,
+    #[serde(skip_deserializing)]
+    pub available_alsa_control_devices: HashMap<String, String>,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct DacSettings {
+    pub enabled: bool,
     pub chip_id: String,
     pub i2c_address: u16,
     pub volume_step: u8,
+    #[serde(skip_deserializing)]
+    pub available_dac_chips: HashMap<String, String>,
+}
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
+pub struct IRInputControlerSettings {
+    pub enabled: bool,
+    pub input_socket_path: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            alsa_settings: AlsaSettings {
-                device_name: String::from(""),
-            },
-            dac_settings: None,
-            lms_settings: None,
-            mpd_settings: None,
-            spotify_settings: None,
+            alsa_settings: AlsaSettings::default(),
+            dac_settings: DacSettings::default(),
+            lms_settings: LmsSettings::default(),
+            mpd_settings: MpdSettings::default(),
+            spotify_settings: SpotifySettings::default(),
+            ir_control_settings: IRInputControlerSettings::default(),
         }
     }
 }
@@ -126,27 +132,23 @@ pub(crate) fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>)
             //model.config.mpd_host = name.clone();
         }
         Msg::ToggleDacEnabled => {
-            model.dac_enabled = !model.dac_enabled;
+            model.settings.dac_settings.enabled = !model.settings.dac_settings.enabled;
         }
         Msg::ToggleSpotifyEnabled => {
-            model.spotify_enabled = !model.spotify_enabled;
+            model.settings.spotify_settings.enabled = !model.settings.spotify_settings.enabled;
         }
         Msg::ToggleLmsEnabled => {
-            model.lms_enabled = !model.lms_enabled;
+            model.settings.lms_settings.enabled = !model.settings.lms_settings.enabled;
+        }
+        Msg::ToggleMpdEnabled => {
+            model.settings.mpd_settings.enabled = !model.settings.mpd_settings.enabled;
         }
         Msg::InputMpdHostChange(value) => {}
         Msg::InputLMSHostChange => {}
         Msg::InputSpotifyDeviceNameChange => {}
         Msg::InputSpotifyUsernameChange => {}
         Msg::InputSpotifyPasswordChange => {}
-        Msg::ToggleMpdEnabled => {
-            model.mpd_enabled = !model.mpd_enabled;
-        }
         Msg::RemoteConfiguration(sett) => {
-            model.spotify_enabled = sett.spotify_settings.is_some();
-            model.mpd_enabled = sett.mpd_settings.is_some();
-            model.lms_enabled = sett.lms_settings.is_some();
-            model.dac_enabled = sett.dac_settings.is_some();
             model.settings = sett;
         }
     }
@@ -157,12 +159,12 @@ pub(crate) fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>)
 // ------ ------
 
 pub(crate) fn view(model: &Model) -> Node<Msg> {
-    view_settings(model)
+    view_settings(&model.settings)
 }
 
 // ------ configuration ------
 
-fn view_settings(model: &Model) -> Node<Msg> {
+fn view_settings(settings: &Settings) -> Node<Msg> {
     div![
         section![
             C!["section"],
@@ -171,40 +173,42 @@ fn view_settings(model: &Model) -> Node<Msg> {
                 C!["field"],
                 ev(Ev::Click, |_| Msg::ToggleMpdEnabled),
                 input![
-                    C!["switch"],
+                    C!["control", "switch"],
                     attrs! {
                         At::Name => "mpd_cb"
                         At::Type => "checkbox"
-                        At::Checked => model.mpd_enabled.as_at_value(),
+                        At::Checked => settings.mpd_settings.enabled.as_at_value(),
                     },
                 ],
                 label![
+                    C!("label"),
                     "Enable Music Player Demon integration?",
                     attrs! {
                         At::For => "mpd_cb"
                     }
                 ]
             ],
-            IF!(model.mpd_enabled => view_mpd(model.settings.mpd_settings.as_ref())),
+            IF!(settings.mpd_settings.enabled => view_mpd(&settings.mpd_settings)),
             div![
-                C!["field"],
+                C!["field", "control"],
                 ev(Ev::Click, |_| Msg::ToggleLmsEnabled),
                 input![
                     C!["switch"],
                     attrs! {
                         At::Name => "lms_cb"
                         At::Type => "checkbox"
-                        At::Checked => model.lms_enabled.as_at_value(),
+                        At::Checked => settings.lms_settings.enabled.as_at_value(),
                     },
                 ],
                 label![
+                    C!("label"),
                     "Enable Logitech Media Server integration?",
                     attrs! {
                         At::For => "lms_cb"
                     }
                 ]
             ],
-            IF!(model.lms_enabled => view_lms(model.settings.lms_settings.as_ref())),
+            IF!(settings.lms_settings.enabled => view_lms(&settings.lms_settings)),
             div![
                 C!["field"],
                 ev(Ev::Click, |_| Msg::ToggleSpotifyEnabled),
@@ -213,17 +217,18 @@ fn view_settings(model: &Model) -> Node<Msg> {
                     attrs! {
                         At::Name => "spotify_cb"
                         At::Type => "checkbox"
-                        At::Checked => model.spotify_enabled.as_at_value(),
+                        At::Checked => settings.spotify_settings.enabled.as_at_value(),
                     },
                 ],
                 label![
-                    "Enable spotify integration?",
+                    C!["label"],
+                    "Enable spotify integration (for premium Spotify accounts only)?",
                     attrs! {
                         At::For => "spotify_cb"
                     }
                 ]
             ],
-            IF!(model.spotify_enabled => view_spotify(model.settings.spotify_settings.as_ref()))
+            IF!(settings.spotify_settings.enabled => view_spotify(&settings.spotify_settings))
         ],
         section![
             C!["section"],
@@ -251,7 +256,7 @@ fn view_settings(model: &Model) -> Node<Msg> {
                     attrs! {
                         At::Name => "dac_cb"
                         At::Type => "checkbox"
-                        At::Checked => model.dac_enabled.as_at_value(),
+                        At::Checked => settings.dac_settings.enabled.as_at_value(),
                     },
                 ],
                 label![
@@ -261,7 +266,7 @@ fn view_settings(model: &Model) -> Node<Msg> {
                     }
                 ]
             ],
-            IF!(model.dac_enabled => view_dac(model.settings.dac_settings.as_ref()))
+            IF!(settings.dac_settings.enabled => view_dac(&settings.dac_settings))
         ],
         div![
             C!["field", "is-grouped"],
@@ -277,125 +282,160 @@ fn view_settings(model: &Model) -> Node<Msg> {
     ]
 }
 
-fn view_dac(dac_settings: Option<&DacSettings>) -> Node<Msg> {
-    if let Some(dac_settings) = dac_settings {
+fn view_dac(dac_settings: &DacSettings) -> Node<Msg> {
+    div![
         div![
+            C!["field"],
+            label!["DAC Chip:", C!["label"]],
             div![
-                C!["field"],
-                label!["DAC Chip:", C!["label"]],
-                div![
-                    C!["select"],
-                    select![
-                        option![attrs! {At::Value => "ak4497"}, "AK4497"],
-                        option![attrs! {At::Value => "ak4490"}, "AK4490"],
-                        option![attrs! {At::Value => "ak4495"}, "AK4495"],
-                    ],
+                C!["select"],
+                select![
+                    option![attrs! {At::Value => "ak4497"}, "AK4497"],
+                    option![attrs! {At::Value => "ak4490"}, "AK4490"],
+                    option![attrs! {At::Value => "ak4495"}, "AK4495"],
                 ],
             ],
-            div![
-                C!["field"],
-                label!["DAC I2C address:", C!["label"]],
-                div![
-                    C!["control"],
-                    input![C!["input"], attrs! {At::Value => dac_settings.i2c_address},],
-                ],
-            ]
-        ]
-    } else {
-        div![]
-    }
-}
-fn view_spotify(spot_settings: Option<&SpotifySettings>) -> Node<Msg> {
-    if let Some(spot_settings) = spot_settings {
+        ],
         div![
+            C!["field"],
+            label!["DAC I2C address:", C!["label"]],
             div![
-                C!["field"],
-                label!["Spotify connect device name:", C!["label"]],
+                C!["control"],
+                input![C!["input"], attrs! {At::Value => dac_settings.i2c_address},],
+            ],
+        ]
+    ]
+}
+fn view_spotify(spot_settings: &SpotifySettings) -> Node<Msg> {
+    div![
+        style! {
+            St::PaddingBottom => "1.2rem"
+        },
+        div![
+            C!["field", "is-horizontal"],
+            div![
+                C!["field-label", "is-small"],
+                label!["Spotify connect device name", C!["label"]],
+            ],
+            div![
+                C!["field-body"],
                 div![
-                    C!["control"],
+                    C!["field"],
                     input![C!["input"], attrs! {At::Value => spot_settings.device_name},],
-                ],
+                ]
+            ],
+        ],
+        div![
+            C!["field", "is-horizontal"],
+            div![
+                C!["field-label", "is-small"],
+                label!["Spotify username", C!["label"]],
             ],
             div![
-                C!["field"],
-                label!["Spotify username:", C!["label"]],
+                C!["field-body"],
                 div![
-                    C!["control"],
+                    C!["field"],
                     input![C!["input"], attrs! {At::Value => spot_settings.username},],
-                ],
+                ]
+            ],
+        ],
+        div![
+            C!["field", "is-horizontal"],
+            div![
+                C!["field-label", "is-small"],
+                label!["Spotify password", C!["label"]],
             ],
             div![
-                C!["field"],
-                label!["Spotify password:", C!["label"]],
+                C!["field-body"],
                 div![
-                    C!["control"],
-                    input![
-                        C!["input"],
-                        attrs! {
-                            At::Value => spot_settings.password,
-                            At::Type => "password",
-                        }
-                    ],
-                ],
-            ]
-        ]
-    } else {
-        div![]
-    }
+                    C!["field"],
+                    input![C!["input"], attrs! {At::Value => spot_settings.password},],
+                ]
+            ],
+        ],
+    ]
 }
-fn view_lms(lms_settings: Option<&LmsSettings>) -> Node<Msg> {
-    if let Some(lms_settings) = lms_settings {
+fn view_lms(lms_settings: &LmsSettings) -> Node<Msg> {
+    div![
+        style! {
+            St::PaddingBottom => "1.2rem"
+        },
         div![
+            C!["field", "is-horizontal"],
             div![
-                C!["field"],
-                label!["Logitech media server host:", C!["label"]],
+                C!["field-label", "is-small"],
+                label!["Logitech media server host", C!["label"]],
+            ],
+            div![
+                C!["field-body"],
                 div![
-                    C!["control"],
+                    C!["field"],
                     input![C!["input"], attrs! {At::Value => lms_settings.server_host},],
-                ],
+                ]
             ],
-            div![
-                C!["field"],
-                label!["Player port:", C!["label"]],
-                div![
-                    C!["control"],
-                    input![C!["input"], attrs! {At::Value => lms_settings.server_port},],
-                ],
-            ],
-            div![
-                C!["field"],
-                label!["Cli port:", C!["label"]],
-                div![
-                    C!["control"],
-                    input![C!["input"], attrs! {At::Value => lms_settings.cli_port},],
-                ],
-            ]
-        ]
-    } else {
-        div![]
-    }
-}
-fn view_mpd(maybe_settings: Option<&MpdSettings>) -> Node<Msg> {
-    if let Some(mpd_settings) = maybe_settings {
+        ],
         div![
+            C!["field", "is-horizontal"],
             div![
-                C!["field"],
-                label!["Music Player Daemon server host:", C!["label"]],
+                C!["field-label", "is-small"],
+                label!["Player port", C!["label"]],
+            ],
+            div![
+                C!["field-body"],
                 div![
-                    C!["control"],
+                    C!["field"],
+                    input![C!["input"], attrs! {At::Value => lms_settings.server_port},],
+                ]
+            ],
+        ],
+        div![
+            C!["field", "is-horizontal"],
+            div![
+                C!["field-label", "is-small"],
+                label!["CLI port", C!["label"]],
+            ],
+            div![
+                C!["field-body"],
+                div![
+                    C!["field"],
+                    input![C!["input"], attrs! {At::Value => lms_settings.cli_port},],
+                ]
+            ],
+        ],
+    ]
+}
+fn view_mpd(mpd_settings: &MpdSettings) -> Node<Msg> {
+    div![
+        style! {
+            St::PaddingBottom => "1.2rem"
+        },
+        div![
+            C!["field", "is-horizontal"],
+            div![
+                C!["field-label", "is-small"],
+                label!["Music Player Daemon server host", C!["label"]],
+            ],
+            div![
+                C!["field-body"],
+                div![
+                    C!["field"],
                     input![C!["input"], attrs! {At::Value => mpd_settings.server_host},],
-                ],
+                ]
+            ],
+        ],
+        div![
+            C!["field", "is-horizontal"],
+            div![
+                C!["field-label", "is-small"],
+                label!["Client port", C!["label"]],
             ],
             div![
-                C!["field"],
-                label!["Client port:", C!["label"]],
+                C!["field-body"],
                 div![
-                    C!["control"],
+                    C!["field"],
                     input![C!["input"], attrs! {At::Value => mpd_settings.server_port},],
-                ],
+                ]
             ],
-        ]
-    } else {
-        div![]
-    }
+        ],
+    ]
 }
