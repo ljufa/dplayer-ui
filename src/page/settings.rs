@@ -3,13 +3,14 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 use seed::{prelude::*, *};
 
+const API_SETTINGS_PATH: &str = "/api/settings";
 // ------ ------
 //     Init
 // ------ ------
 pub(crate) fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
     log!("Settings Init called");
     orders.perform_cmd(async {
-        let response = fetch("/api/settings")
+        let response = fetch(API_SETTINGS_PATH)
             .await
             .expect("Failed to get settings from dplayer backend");
 
@@ -32,7 +33,7 @@ pub struct Model {
     settings: Settings,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct Settings {
     pub spotify_settings: SpotifySettings,
     pub lms_settings: LmsSettings,
@@ -40,17 +41,17 @@ pub struct Settings {
     pub dac_settings: DacSettings,
     pub alsa_settings: AlsaSettings,
     pub ir_control_settings: IRInputControlerSettings,
+    pub oled_settings: OLEDSettings,
 }
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
 pub struct SpotifySettings {
     pub enabled: bool,
     pub device_name: String,
     pub username: String,
     pub password: String,
-    pub bitrate: u16,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
 pub struct LmsSettings {
     pub enabled: bool,
     pub cli_port: u32,
@@ -58,13 +59,13 @@ pub struct LmsSettings {
     pub server_port: u32,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
 pub struct MpdSettings {
     pub enabled: bool,
     pub server_host: String,
     pub server_port: u32,
 }
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
 pub struct AlsaSettings {
     pub device_name: String,
     #[serde(skip_deserializing)]
@@ -73,7 +74,7 @@ pub struct AlsaSettings {
     pub available_alsa_control_devices: HashMap<String, String>,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
 pub struct DacSettings {
     pub enabled: bool,
     pub chip_id: String,
@@ -82,10 +83,14 @@ pub struct DacSettings {
     #[serde(skip_deserializing)]
     pub available_dac_chips: HashMap<String, String>,
 }
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
 pub struct IRInputControlerSettings {
     pub enabled: bool,
     pub input_socket_path: String,
+}
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
+pub struct OLEDSettings {
+    pub enabled: bool,
 }
 
 impl Default for Settings {
@@ -97,6 +102,7 @@ impl Default for Settings {
             mpd_settings: MpdSettings::default(),
             spotify_settings: SpotifySettings::default(),
             ir_control_settings: IRInputControlerSettings::default(),
+            oled_settings: OLEDSettings::default(),
         }
     }
 }
@@ -110,13 +116,15 @@ pub(crate) enum Msg {
 
     // ---- Input capture ----
     InputMpdHostChange(String),
+    InputMpdPortChange(u32),
     InputLMSHostChange,
     InputSpotifyDeviceNameChange,
     InputSpotifyUsernameChange,
     InputSpotifyPasswordChange,
 
     // --- Buttons ----
-    SaveConfiguration,
+    SaveSettings,
+    SettingsSaved(fetch::Result<Settings>),
 
     RemoteConfiguration(Settings),
 }
@@ -127,9 +135,9 @@ pub(crate) enum Msg {
 
 pub(crate) fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>) {
     match msg {
-        Msg::SaveConfiguration => {
-            log!("New data: {} {}", model.settings);
-            //model.config.mpd_host = name.clone();
+        Msg::SaveSettings => {
+            let settings = model.settings.clone();
+            orders.perform_cmd(async { Msg::SettingsSaved(save_settings(settings).await) });
         }
         Msg::ToggleDacEnabled => {
             model.settings.dac_settings.enabled = !model.settings.dac_settings.enabled;
@@ -143,7 +151,12 @@ pub(crate) fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>)
         Msg::ToggleMpdEnabled => {
             model.settings.mpd_settings.enabled = !model.settings.mpd_settings.enabled;
         }
-        Msg::InputMpdHostChange(value) => {}
+        Msg::InputMpdHostChange(value) => {
+            model.settings.mpd_settings.server_host = value;
+        }
+        Msg::InputMpdPortChange(value) => {
+            model.settings.mpd_settings.server_port = value;
+        }
         Msg::InputLMSHostChange => {}
         Msg::InputSpotifyDeviceNameChange => {}
         Msg::InputSpotifyUsernameChange => {}
@@ -151,7 +164,21 @@ pub(crate) fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>)
         Msg::RemoteConfiguration(sett) => {
             model.settings = sett;
         }
+        Msg::SettingsSaved(saved) => {
+            log!("Saved settings with result {}", saved);
+        }
     }
+}
+
+async fn save_settings(settings: Settings) -> fetch::Result<Settings> {
+    Request::new(API_SETTINGS_PATH)
+        .method(Method::Post)
+        .json(&settings)?
+        .fetch()
+        .await?
+        .check_status()?
+        .json::<Settings>()
+        .await
 }
 
 // ------ ------
@@ -275,7 +302,7 @@ fn view_settings(settings: &Settings) -> Node<Msg> {
                 button![
                     C!["button", "is-dark"],
                     "Save",
-                    ev(Ev::Click, |_| Msg::SaveConfiguration)
+                    ev(Ev::Click, |_| Msg::SaveSettings)
                 ]
             ]
         ]
@@ -419,7 +446,11 @@ fn view_mpd(mpd_settings: &MpdSettings) -> Node<Msg> {
                 C!["field-body"],
                 div![
                     C!["field"],
-                    input![C!["input"], attrs! {At::Value => mpd_settings.server_host},],
+                    input![
+                        C!["input"],
+                        attrs! {At::Value => mpd_settings.server_host},
+                        input_ev(Ev::Input, move |value| { Msg::InputMpdHostChange(value) }),
+                    ],
                 ]
             ],
         ],
@@ -433,7 +464,13 @@ fn view_mpd(mpd_settings: &MpdSettings) -> Node<Msg> {
                 C!["field-body"],
                 div![
                     C!["field"],
-                    input![C!["input"], attrs! {At::Value => mpd_settings.server_port},],
+                    input![
+                        C!["input"],
+                        attrs! {At::Value => mpd_settings.server_port},
+                        input_ev(Ev::Input, move |v| {
+                            Msg::InputMpdPortChange(v.parse::<u32>().unwrap_or_default())
+                        }),
+                    ],
                 ]
             ],
         ],
