@@ -144,14 +144,6 @@ fn view_brand_and_hamburger(menu_visible: bool, base_url: &Url, page: &Page) -> 
         },
         C!["navbar-brand"],
         // ------ Logo ------
-        a![
-            C!("navbar-item"),
-            match page {
-                Page::Player(model) =>
-                    page::player::view_player_switch(model).map_msg(Msg::PlayerMsg),
-                _ => empty!(),
-            }
-        ],
         // ------ Hamburger ------
         a![
             C!["navbar-burger", "burger", IF!(menu_visible => "is-active")],

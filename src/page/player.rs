@@ -28,10 +28,10 @@ pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
         },
         player_info: None,
         current_track_info: None,
-        input_text: String::new(),
         web_socket: create_websocket(orders),
         web_socket_reconnector: None,
         waiting_response: false,
+        remote_error: None,
     }
 }
 
@@ -44,10 +44,10 @@ pub struct Model {
     streamer_status: StreamerStatus,
     player_info: Option<PlayerInfo>,
     current_track_info: Option<CurrentTrackInfo>,
-    input_text: String,
     web_socket: WebSocket,
     web_socket_reconnector: Option<StreamHandle>,
     waiting_response: bool,
+    remote_error: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -94,6 +94,15 @@ impl PlayerInfo {
         }
     }
 }
+
+#[derive(Debug, serde::Deserialize)]
+pub enum StatusChangeEvent {
+    CurrentTrackInfoChanged(CurrentTrackInfo),
+    StreamerStatusChanged(StreamerStatus),
+    PlayerInfoChanged(PlayerInfo),
+    Error(String),
+}
+
 fn dur_to_string(duration: Duration) -> String {
     let mut result = "00:00:00".to_string();
     let secs = duration.as_secs();
@@ -156,9 +165,10 @@ pub enum Command {
 
 pub enum Msg {
     WebSocketOpened,
-    CurrentTrackInfoChanged(CurrentTrackInfo),
-    StreamerStatusChanged(StreamerStatus),
-    PlayerInfoChaged(PlayerInfo),
+    StatusChangeEventReceived(StatusChangeEvent),
+    // CurrentTrackInfoChanged(CurrentTrackInfo),
+    // StreamerStatusChanged(StreamerStatus),
+    // PlayerInfoChaged(PlayerInfo),
     CloseWebSocket,
     WebSocketClosed(CloseEvent),
     WebSocketFailed,
@@ -191,42 +201,9 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
             model.web_socket_reconnector = None;
             log!("WebSocket connection is open now");
         }
-        Msg::CurrentTrackInfoChanged(message) => {
-            model.waiting_response = false;
-            let ps = message;
-            model.current_track_info = Some(ps.clone());
-            if ps.uri.is_none() {
-                orders.perform_cmd(async {
-                    if ps.album.is_some() && ps.artist.is_some() {
-                        let ai =
-                            get_album_image_from_lastfm_api(ps.album.unwrap(), ps.artist.unwrap())
-                                .await;
-                        match ai {
-                            Some(ai) => Msg::AlbumImageUpdated(ai),
-                            None => Msg::AlbumImageUpdated(Image {
-                                size: "mega".to_string(),
-                                text: "/no_album.png".to_string(),
-                            }),
-                        }
-                    } else {
-                        Msg::AlbumImageUpdated(Image {
-                            size: "mega".to_string(),
-                            text: "/no_album.png".to_string(),
-                        })
-                    }
-                });
-            }
-        }
+
         Msg::AlbumImageUpdated(image) => {
             model.current_track_info.as_mut().unwrap().uri = Some(image.text);
-        }
-        Msg::StreamerStatusChanged(message) => {
-            model.waiting_response = false;
-            model.streamer_status = message;
-        }
-        Msg::PlayerInfoChaged(message) => {
-            model.waiting_response = false;
-            model.player_info = Some(message);
         }
         Msg::CloseWebSocket => {
             model.web_socket_reconnector = None;
@@ -272,7 +249,45 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
 
             model.web_socket.send_json(&cmd).unwrap();
         }
-        _ => {}
+        Msg::StatusChangeEventReceived(StatusChangeEvent::CurrentTrackInfoChanged(track_info)) => {
+            model.waiting_response = false;
+            let ps = track_info;
+            model.current_track_info = Some(ps.clone());
+            if ps.uri.is_none() {
+                orders.perform_cmd(async {
+                    if ps.album.is_some() && ps.artist.is_some() {
+                        let ai =
+                            get_album_image_from_lastfm_api(ps.album.unwrap(), ps.artist.unwrap())
+                                .await;
+                        match ai {
+                            Some(ai) => Msg::AlbumImageUpdated(ai),
+                            None => Msg::AlbumImageUpdated(Image {
+                                size: "mega".to_string(),
+                                text: "/no_album.png".to_string(),
+                            }),
+                        }
+                    } else {
+                        Msg::AlbumImageUpdated(Image {
+                            size: "mega".to_string(),
+                            text: "/no_album.png".to_string(),
+                        })
+                    }
+                });
+            }
+        }
+        Msg::StatusChangeEventReceived(StatusChangeEvent::PlayerInfoChanged(player_info)) => {
+            model.waiting_response = false;
+            model.player_info = Some(player_info);
+        }
+        Msg::StatusChangeEventReceived(StatusChangeEvent::StreamerStatusChanged(
+            streamer_status,
+        )) => {
+            model.waiting_response = false;
+            model.streamer_status = streamer_status;
+        }
+        Msg::StatusChangeEventReceived(StatusChangeEvent::Error(error)) => {
+            model.remote_error = Some(error)
+        }
     }
 }
 
@@ -312,23 +327,28 @@ fn create_websocket(orders: &impl Orders<Msg>) -> WebSocket {
 
 fn decode_message(message: WebSocketMessage, msg_sender: Rc<dyn Fn(Option<Msg>)>) {
     let msg_text = message.text();
-    if let Ok(msg_text) = msg_text {
-        if msg_text.contains("title") || msg_text.contains("filename") {
-            let msg = message
-                .json::<CurrentTrackInfo>()
-                .expect("Failed to decode WebSocket text message");
-            msg_sender(Some(Msg::CurrentTrackInfoChanged(msg)));
-        } else if msg_text.contains("source_player") || msg_text.contains("volume") {
-            let msg = message
-                .json::<StreamerStatus>()
-                .expect("Failed to decode WebSocket text message");
-            msg_sender(Some(Msg::StreamerStatusChanged(msg)));
-        } else if msg_text.contains("time") {
-            let msg = message
-                .json::<PlayerInfo>()
-                .expect("Failed to decode WebSocket text message");
-            msg_sender(Some(Msg::PlayerInfoChaged(msg)));
-        }
+    if let Ok(_) = msg_text {
+        let msg = message
+            .json::<StatusChangeEvent>()
+            .expect("Failed to decode WebSocket text message");
+        msg_sender(Some(Msg::StatusChangeEventReceived(msg)));
+
+        // if msg_text.contains("title") || msg_text.contains("filename") {
+        //     let msg = message
+        //         .json::<CurrentTrackInfo>()
+        //         .expect("Failed to decode WebSocket text message");
+        //     msg_sender(Some(Msg::CurrentTrackInfoChanged(msg)));
+        // } else if msg_text.contains("source_player") || msg_text.contains("volume") {
+        //     let msg = message
+        //         .json::<StreamerStatus>()
+        //         .expect("Failed to decode WebSocket text message");
+        //     msg_sender(Some(Msg::StreamerStatusChanged(msg)));
+        // } else if msg_text.contains("time") {
+        //     let msg = message
+        //         .json::<PlayerInfo>()
+        //         .expect("Failed to decode WebSocket text message");
+        //     msg_sender(Some(Msg::PlayerInfoChaged(msg)));
+        // }
     }
 }
 
@@ -379,6 +399,7 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
                 St::Background => "rgba(86, 92, 86, 0.507)",
                 St::MinHeight => "100vh"
             },
+            view_player_switch(model),
             view_track_info(
                 model.current_track_info.as_ref(),
                 model.player_info.as_ref()
@@ -696,7 +717,7 @@ fn view_volume_slider(dac_status: &DacStatus) -> Node<Msg> {
     ]
 }
 
-pub fn view_player_switch(model: &Model) -> Node<Msg> {
+fn view_player_switch(model: &Model) -> Node<Msg> {
     let pt = model.streamer_status.source_player;
     nav![
         C!["level is-mobile"],

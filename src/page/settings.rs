@@ -23,6 +23,7 @@ pub(crate) fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
     });
     Model {
         settings: Settings::default(),
+        waiting_response: false,
     }
 }
 
@@ -31,6 +32,7 @@ pub(crate) fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
 #[derive(Debug)]
 pub struct Model {
     settings: Settings,
+    waiting_response: bool,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -57,6 +59,7 @@ pub struct LmsSettings {
     pub cli_port: u32,
     pub server_host: String,
     pub server_port: u32,
+    pub alsa_pcm_device_name: String,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
@@ -138,6 +141,7 @@ pub(crate) fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>)
         Msg::SaveSettings => {
             let settings = model.settings.clone();
             orders.perform_cmd(async { Msg::SettingsSaved(save_settings(settings).await) });
+            model.waiting_response = true;
         }
         Msg::ToggleDacEnabled => {
             model.settings.dac_settings.enabled = !model.settings.dac_settings.enabled;
@@ -166,6 +170,7 @@ pub(crate) fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>)
         }
         Msg::SettingsSaved(saved) => {
             log!("Saved settings with result {}", saved);
+            model.waiting_response = false;
         }
     }
 }
@@ -186,7 +191,32 @@ async fn save_settings(settings: Settings) -> fetch::Result<Settings> {
 // ------ ------
 
 pub(crate) fn view(model: &Model) -> Node<Msg> {
-    view_settings(&model.settings)
+    div![
+        // spinner
+        div![
+            C!["modal", IF!(model.waiting_response => "is-active")],
+            div![C!["modal-background"]],
+            div![
+                C!["modal-content"],
+                div![
+                    C!("sk-fading-circle"),
+                    div![C!["sk-circle1 sk-circle"]],
+                    div![C!["sk-circle2 sk-circle"]],
+                    div![C!["sk-circle3 sk-circle"]],
+                    div![C!["sk-circle4 sk-circle"]],
+                    div![C!["sk-circle5 sk-circle"]],
+                    div![C!["sk-circle6 sk-circle"]],
+                    div![C!["sk-circle7 sk-circle"]],
+                    div![C!["sk-circle8 sk-circle"]],
+                    div![C!["sk-circle9 sk-circle"]],
+                    div![C!["sk-circle10 sk-circle"]],
+                    div![C!["sk-circle11 sk-circle"]],
+                    div![C!["sk-circle12 sk-circle"]],
+                ]
+            ]
+        ],
+        view_settings(&model.settings)
+    ]
 }
 
 // ------ configuration ------
