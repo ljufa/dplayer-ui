@@ -15,3 +15,4 @@ indexmap = { version = "1.6.1", features = ["serde-1"] }
 enclose = "1.1.8"
 strum = "0.23"
 strum_macros = "0.23"
+api_models = { path = "../dplayer/dplayer-api-models" }

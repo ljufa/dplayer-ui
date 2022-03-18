@@ -3,21 +3,7 @@ use seed::{prelude::*, *};
 mod page;
 
 const SETTINGS: &str = "settings";
-const PLAYER: &str = "player";
 const FIRST_SETUP: &str = "setup";
-
-// ------ ------
-//     Init
-// ------ ------
-
-fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
-    orders.subscribe(Msg::UrlChanged);
-    Model {
-        menu_visible: false,
-        base_url: url.to_hash_base_url(),
-        page: Page::init(url, orders),
-    }
-}
 
 // ------ ------
 //     Model
@@ -47,14 +33,14 @@ enum Page {
 }
 impl Page {
     fn init(mut url: Url, orders: &mut impl Orders<Msg>) -> Self {
-        match url.remaining_hash_path_parts().as_slice() {
+        let slice = url.remaining_hash_path_parts();
+        match slice.as_slice() {
             [FIRST_SETUP] => Self::Home,
             [SETTINGS] => Self::Settings(page::settings::init(
                 url,
                 &mut orders.proxy(Msg::SettingsMsg),
             )),
-            [PLAYER] => Self::Player(page::player::init(url, &mut orders.proxy(Msg::PlayerMsg))),
-
+            [] => Self::Player(page::player::init(url, &mut orders.proxy(Msg::PlayerMsg))),
             _ => Self::NotFound,
         }
     }
@@ -66,14 +52,31 @@ impl Page {
 
 struct_urls!();
 impl<'a> Urls<'a> {
-    fn home(self) -> Url {
-        self.base_url()
-    }
     fn settings(self) -> Url {
         self.base_url().add_hash_path_part(SETTINGS)
     }
+    fn settings_abs() -> Url {
+        Url::new().add_hash_path_part(SETTINGS)
+    }
     fn player(self) -> Url {
-        self.base_url().add_hash_path_part(PLAYER)
+        self.base_url()
+    }
+
+    fn player_abs() -> Url {
+        Url::new()
+    }
+}
+
+// ------ ------
+//     Init
+// ------ ------
+
+fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
+    orders.subscribe(Msg::UrlChanged);
+    Model {
+        menu_visible: false,
+        base_url: url.to_hash_base_url(),
+        page: Page::init(url, orders),
     }
 }
 
@@ -103,10 +106,7 @@ fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>) {
 // ------ ------
 
 fn view(model: &Model) -> impl IntoNodes<Msg> {
-    nodes![
-        view_navbar(model.menu_visible, &model.base_url, &model.page),
-        view_content(&model.page, &model.base_url)
-    ]
+    nodes![view_content(&model.page, &model.base_url)]
 }
 
 // ----- view_content ------
@@ -120,75 +120,6 @@ fn view_content(page: &Page, base_url: &Url) -> Node<Msg> {
             Page::Settings(model) => page::settings::view(model).map_msg(Msg::SettingsMsg),
             Page::Player(model) => page::player::view(model).map_msg(Msg::PlayerMsg),
         }
-    ]
-}
-
-// ----- view_navbar ------
-
-fn view_navbar(menu_visible: bool, base_url: &Url, page: &Page) -> Node<Msg> {
-    nav![
-        C!["navbar", "is-dark"],
-        attrs! {
-            At::from("role") => "navigation",
-            At::AriaLabel => "main navigation",
-        },
-        view_brand_and_hamburger(menu_visible, base_url, page),
-        view_navbar_menu(menu_visible, base_url, page),
-    ]
-}
-
-fn view_brand_and_hamburger(menu_visible: bool, base_url: &Url, page: &Page) -> Node<Msg> {
-    div![
-        style! {
-            St::Padding => "1.2rem",
-        },
-        C!["navbar-brand"],
-        // ------ Logo ------
-        // ------ Hamburger ------
-        a![
-            C!["navbar-burger", "burger", IF!(menu_visible => "is-active")],
-            style! {
-                St::MarginTop => "auto",
-                St::MarginBottom => "auto",
-            },
-            attrs! {
-                At::from("role") => "button",
-                At::AriaLabel => "menu",
-                At::AriaExpanded => menu_visible,
-            },
-            ev(Ev::Click, |event| {
-                event.stop_propagation();
-                Msg::ToggleMenu
-            }),
-            span![attrs! {At::AriaHidden => "true"}],
-            span![attrs! {At::AriaHidden => "true"}],
-            span![attrs! {At::AriaHidden => "true"}],
-        ]
-    ]
-}
-
-fn view_navbar_menu(menu_visible: bool, base_url: &Url, page: &Page) -> Node<Msg> {
-    div![
-        C!["navbar-menu", IF!(menu_visible => "is-active")],
-        div![
-            C!["navbar-start"],
-            a![
-                C![
-                    "navbar-item",
-                    IF!(matches!(page, Page::Settings(_)) => "is-active"),
-                ],
-                attrs! {At::Href => Urls::new(base_url).settings()},
-                "Settings",
-            ],
-            a![
-                C![
-                    "navbar-item",
-                    IF!(matches!(page, Page::Player(_)) => "is-active"),
-                ],
-                attrs! {At::Href => Urls::new(base_url).player()},
-                "Player",
-            ],
-        ]
     ]
 }
 

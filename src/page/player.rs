@@ -1,3 +1,4 @@
+use api_models::player::*;
 use seed::{prelude::*, *};
 use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, EnumString, IntoStaticStr};
@@ -9,31 +10,9 @@ use std::{
     time::Duration,
 };
 
+use crate::Urls;
+
 const WS_URL: &str = "ws://192.168.5.59:8000/api/player";
-
-// ------ ------
-//     Init
-// ------ ------
-
-pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
-    Model {
-        streamer_status: StreamerStatus {
-            source_player: PlayerType::MPD,
-            selected_audio_output: AudioOut::SPKR,
-            dac_status: DacStatus {
-                volume: 0,
-                filter: FilterType::SharpRollOff,
-                sound_sett: 0,
-            },
-        },
-        player_info: None,
-        current_track_info: None,
-        web_socket: create_websocket(orders),
-        web_socket_reconnector: None,
-        waiting_response: false,
-        remote_error: None,
-    }
-}
 
 // ------ ------
 //     Model
@@ -50,125 +29,9 @@ pub struct Model {
     remote_error: Option<String>,
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct StreamerStatus {
-    pub selected_audio_output: AudioOut,
-    pub source_player: PlayerType,
-    pub dac_status: DacStatus,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct DacStatus {
-    pub volume: u8,
-    pub filter: FilterType,
-    pub sound_sett: u8,
-}
-
-#[derive(Debug, serde::Deserialize, Clone)]
-pub struct CurrentTrackInfo {
-    pub filename: Option<String>,
-    pub name: Option<String>,
-    pub album: Option<String>,
-    pub artist: Option<String>,
-    pub title: Option<String>,
-    pub genre: Option<String>,
-    pub date: Option<String>,
-    pub uri: Option<String>,
-}
-#[derive(Debug, serde::Deserialize, Clone)]
-pub struct PlayerInfo {
-    pub state: Option<PlayerState>,
-    pub random: bool,
-    pub audio_format_rate: Option<u32>,
-    pub audio_format_bit: Option<u8>,
-    pub audio_format_channels: Option<u8>,
-    pub time: Option<(Duration, Duration)>,
-}
-
-impl PlayerInfo {
-    pub fn format_time(&self) -> String {
-        if let Some(time) = self.time {
-            return format!("{} / {}", dur_to_string(time.0), dur_to_string(time.1));
-        } else {
-            return "00:00:00 / 00:00:00".to_string();
-        }
-    }
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub enum StatusChangeEvent {
-    CurrentTrackInfoChanged(CurrentTrackInfo),
-    StreamerStatusChanged(StreamerStatus),
-    PlayerInfoChanged(PlayerInfo),
-    Error(String),
-}
-
-fn dur_to_string(duration: Duration) -> String {
-    let mut result = "00:00:00".to_string();
-    let secs = duration.as_secs();
-    if secs > 0 {
-        let seconds = secs % 60;
-        let minutes = (secs / 60) % 60;
-        let hours = (secs / 60) / 60;
-        result = format!("{:0>2}:{:0>2}:{:0>2}", hours, minutes, seconds).to_string();
-    }
-    return result;
-}
-
-#[derive(Debug, PartialEq, serde::Deserialize, IntoStaticStr, Clone)]
-pub enum PlayerState {
-    PLAYING,
-    PAUSED,
-    STOPPED,
-}
-
-#[derive(Debug, serde::Deserialize, IntoStaticStr)]
-pub enum AudioOut {
-    SPKR,
-    HEAD,
-}
-#[derive(
-    Debug, serde::Deserialize, serde::Serialize, PartialEq, EnumString, IntoStaticStr, EnumIter,
-)]
-pub enum FilterType {
-    SharpRollOff,
-    SlowRollOff,
-    ShortDelaySharpRollOff,
-    ShortDelaySlowRollOff,
-    SuperSlow,
-}
-#[derive(Debug, Copy, PartialEq, Clone, serde::Deserialize, serde::Serialize, IntoStaticStr)]
-pub enum PlayerType {
-    SPF,
-    MPD,
-    LMS,
-}
-
-#[derive(Debug, serde::Serialize)]
-pub enum Command {
-    VolUp,
-    VolDown,
-    Next,
-    Prev,
-    Pause,
-    Play,
-    RandomToggle,
-
-    SwitchToPlayer(PlayerType),
-    Filter(FilterType),
-    SetVol(u8),
-    Sound(u8),
-    PowerOff,
-    ChangeAudioOutput,
-    Rewind(i8),
-}
-
 pub enum Msg {
     WebSocketOpened,
     StatusChangeEventReceived(StatusChangeEvent),
-    // CurrentTrackInfoChanged(CurrentTrackInfo),
-    // StreamerStatusChanged(StreamerStatus),
-    // PlayerInfoChaged(PlayerInfo),
     CloseWebSocket,
     WebSocketClosed(CloseEvent),
     WebSocketFailed,
@@ -192,6 +55,26 @@ pub struct Image {
 }
 
 // ------ ------
+//     Init
+// ------ ------
+
+pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
+    Model {
+        streamer_status: StreamerStatus {
+            source_player: PlayerType::MPD,
+            selected_audio_output: AudioOut::SPKR,
+            dac_status: DacStatus::default(),
+        },
+        player_info: None,
+        current_track_info: None,
+        web_socket: create_websocket(orders),
+        web_socket_reconnector: None,
+        waiting_response: false,
+        remote_error: None,
+    }
+}
+
+// ------ ------
 //    Update
 // ------ ------
 
@@ -205,6 +88,7 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
         Msg::AlbumImageUpdated(image) => {
             model.current_track_info.as_mut().unwrap().uri = Some(image.text);
         }
+
         Msg::CloseWebSocket => {
             model.web_socket_reconnector = None;
             model
@@ -212,6 +96,7 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
                 .close(None, Some("user clicked Close button"))
                 .unwrap();
         }
+
         Msg::WebSocketClosed(close_event) => {
             log!("==================");
             log!("WebSocket connection was closed:");
@@ -227,6 +112,7 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
                 );
             }
         }
+
         Msg::WebSocketFailed => {
             log!("WebSocket failed");
             if model.web_socket_reconnector.is_none() {
@@ -235,6 +121,7 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
                 );
             }
         }
+
         Msg::ReconnectWebSocket(retries) => {
             log!("Reconnect attempt:", retries);
             model.web_socket = create_websocket(orders);
@@ -249,6 +136,7 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
 
             model.web_socket.send_json(&cmd).unwrap();
         }
+
         Msg::StatusChangeEventReceived(StatusChangeEvent::CurrentTrackInfoChanged(track_info)) => {
             model.waiting_response = false;
             let ps = track_info;
@@ -275,88 +163,25 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
                 });
             }
         }
+
         Msg::StatusChangeEventReceived(StatusChangeEvent::PlayerInfoChanged(player_info)) => {
             model.waiting_response = false;
             model.player_info = Some(player_info);
         }
+
         Msg::StatusChangeEventReceived(StatusChangeEvent::StreamerStatusChanged(
             streamer_status,
         )) => {
             model.waiting_response = false;
             model.streamer_status = streamer_status;
         }
+
         Msg::StatusChangeEventReceived(StatusChangeEvent::Error(error)) => {
             model.remote_error = Some(error)
         }
-    }
-}
+        Msg::StatusChangeEventReceived(_) => {
 
-async fn get_album_image_from_lastfm_api(album: String, artist: String) -> Option<Image> {
-    let response = fetch(format!("http://ws.audioscrobbler.com/2.0/?method=album.getinfo&album={}&artist={}&api_key=3b3df6c5dd3ad07222adc8dd3ccd8cdc&format=json", album, artist)).await;
-    if let Ok(response) = response {
-        let info = response.json::<AlbumInfo>().await;
-        if let Ok(info) = info {
-            info.album
-                .image
-                .into_iter()
-                .filter(|i| i.size == "mega" && i.text.len() > 0)
-                .next()
-        } else {
-            log!("Failed to get album info {}", info);
-            None
         }
-    } else if let Err(e) = response {
-        log!("Error getting album info from last.fm {}", e);
-        None
-    } else {
-        None
-    }
-}
-
-fn create_websocket(orders: &impl Orders<Msg>) -> WebSocket {
-    let msg_sender = orders.msg_sender();
-
-    WebSocket::builder(WS_URL, orders)
-        .on_open(|| Msg::WebSocketOpened)
-        .on_message(move |msg| decode_message(msg, msg_sender))
-        .on_close(Msg::WebSocketClosed)
-        .on_error(|| Msg::WebSocketFailed)
-        .build_and_open()
-        .unwrap()
-}
-
-fn decode_message(message: WebSocketMessage, msg_sender: Rc<dyn Fn(Option<Msg>)>) {
-    let msg_text = message.text();
-    if let Ok(_) = msg_text {
-        let msg = message
-            .json::<StatusChangeEvent>()
-            .expect("Failed to decode WebSocket text message");
-        msg_sender(Some(Msg::StatusChangeEventReceived(msg)));
-
-        // if msg_text.contains("title") || msg_text.contains("filename") {
-        //     let msg = message
-        //         .json::<CurrentTrackInfo>()
-        //         .expect("Failed to decode WebSocket text message");
-        //     msg_sender(Some(Msg::CurrentTrackInfoChanged(msg)));
-        // } else if msg_text.contains("source_player") || msg_text.contains("volume") {
-        //     let msg = message
-        //         .json::<StreamerStatus>()
-        //         .expect("Failed to decode WebSocket text message");
-        //     msg_sender(Some(Msg::StreamerStatusChanged(msg)));
-        // } else if msg_text.contains("time") {
-        //     let msg = message
-        //         .json::<PlayerInfo>()
-        //         .expect("Failed to decode WebSocket text message");
-        //     msg_sender(Some(Msg::PlayerInfoChaged(msg)));
-        // }
-    }
-}
-
-fn get_background_image(model: &Model) -> String {
-    if let Some(ps) = model.current_track_info.as_ref() {
-        format!("url({})", ps.uri.as_ref().map_or("", |f| f))
-    } else {
-        String::new()
     }
 }
 
@@ -399,7 +224,6 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
                 St::Background => "rgba(86, 92, 86, 0.507)",
                 St::MinHeight => "100vh"
             },
-            view_player_switch(model),
             view_track_info(
                 model.current_track_info.as_ref(),
                 model.player_info.as_ref()
@@ -408,6 +232,7 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
             view_controls(model.player_info.as_ref()),
             view_volume_slider(&model.streamer_status.dac_status),
             view_controls_down(model.player_info.as_ref(), &model.streamer_status),
+            view_player_switch(model),
         ]
     ]
 }
@@ -419,7 +244,8 @@ fn view_track_info(
     if let Some(ps) = status {
         div![
             style! {
-                St::MinHeight => "300px"
+                St::MinHeight => "300px",
+                St::PaddingTop => "2rem"
             },
             C!["transparent"],
             nav![
@@ -520,30 +346,26 @@ fn view_track_info(
 
 fn view_track_progress_bar(player_info: Option<&PlayerInfo>) -> Node<Msg> {
     if let Some(player_info) = player_info {
-        if let Some((current, total)) = player_info.time {
-            div![
-                style! {
-                    St::Padding => "1.2rem",
-                },
-                C!["has-text-centered"],
-                span![
-                    C![
-                        "is-size-6",
-                        "has-text-light",
-                        "has-background-dark-transparent"
-                    ],
-                    player_info.format_time()
+        div![
+            style! {
+                St::Padding => "1.2rem",
+            },
+            C!["has-text-centered"],
+            span![
+                C![
+                    "is-size-6",
+                    "has-text-light",
+                    "has-background-dark-transparent"
                 ],
-                progress![
-                    C!["progress", "is-small", "is-success"],
-                    attrs! {"value"=> current.as_secs()},
-                    attrs! {"max"=> total.as_secs()},
-                    current.as_secs()
-                ],
-            ]
-        } else {
-            empty!()
-        }
+                player_info.format_time()
+            ],
+            progress![
+                C!["progress", "is-small", "is-success"],
+                attrs! {"value"=> player_info.time.0.as_secs()},
+                attrs! {"max"=> player_info.time.1.as_secs()},
+                player_info.time.0.as_secs()
+            ],
+        ]
     } else {
         empty!()
     }
@@ -628,7 +450,7 @@ fn view_controls_down(
     };
     let shuffle = player_info.map_or(
         "shuffle",
-        |r| if r.random { "shuffle_on" } else { "shuffle" },
+        |r| if r.random.unwrap_or(false) { "shuffle_on" } else { "shuffle" },
     );
 
     div![
@@ -657,30 +479,13 @@ fn view_controls_down(
                     ],
                     div![
                         C!["level-item"],
-                        div![
-                            C!["select"],
-                            select![
-                                FilterType::iter()
-                                    .map(|f| {
-                                        let fs: &'static str = f.into();
-                                        let is_selected = FilterType::from_str(fs).unwrap()
-                                            == streamer_status.dac_status.filter;
-                                        (fs, is_selected)
-                                    })
-                                    .map(|(fs, is_selected)| option![
-                                        attrs! {At::Value => fs },
-                                        IF!(is_selected => attrs!{At::Selected => ""}),
-                                        fs
-                                    ]),
-                                input_ev(Ev::Change, move |selected| Msg::SendCommand(
-                                    Command::Filter(
-                                        FilterType::from_str(selected.as_str()).unwrap()
-                                    )
-                                )),
-                            ],
-                        ],
+                        button![
+                            C!["button"],
+                            span![C!("icon"), i![C!("fa fa-cog")]],
+                            ev(Ev::Click, |_| { Urls::settings_abs().go_and_load() }),
+                        ]
                     ],
-                ],
+                ]
             ]
         ]
     ]
@@ -719,46 +524,102 @@ fn view_volume_slider(dac_status: &DacStatus) -> Node<Msg> {
 
 fn view_player_switch(model: &Model) -> Node<Msg> {
     let pt = model.streamer_status.source_player;
-    nav![
-        C!["level is-mobile"],
-        div![
-            C!["level-left"],
+
+    div![
+        C!["transparent"],
+        nav![
+            C!["level is-mobile"],
             div![
-                C!["level-item"],
-                button![
-                    IF!(pt == PlayerType::MPD => attrs!{"disabled"=>true}),
-                    C!["button", "is-small"],
-                    span![C!("icon"), i![C!("fas fa-file-audio")]],
-                    span!("MPD"),
-                    ev(Ev::Click, |_| Msg::SendCommand(Command::SwitchToPlayer(
-                        PlayerType::MPD
-                    )))
-                ]
-            ],
-            div![
-                C!["level-item"],
-                button![
-                    IF!(true || pt == PlayerType::SPF=> attrs!{"disabled"=>true}),
-                    C!["button", "is-small"],
-                    span![C!("icon"), i![C!("fab fa-spotify")]],
-                    span!("Spotify"),
-                    ev(Ev::Click, |_| Msg::SendCommand(Command::SwitchToPlayer(
-                        PlayerType::SPF
-                    )))
-                ]
-            ],
-            div![
-                C!["level-item"],
-                button![
-                    IF!(pt == PlayerType::LMS=> attrs!{"disabled"=>true}),
-                    C!["button", "is-small"],
-                    span![C!("icon"), i![C!("fas fa-compact-disc")]],
-                    span!("LMS"),
-                    ev(Ev::Click, |_| Msg::SendCommand(Command::SwitchToPlayer(
-                        PlayerType::LMS
-                    )))
-                ]
-            ],
+                C!["level-left"],
+                div![
+                    C!["level-item"],
+                    button![
+                        IF!(pt == PlayerType::MPD => attrs!{"disabled"=>true}),
+                        C!["button", "is-small"],
+                        span![C!("icon"), i![C!("fas fa-file-audio")]],
+                        span!("MPD"),
+                        ev(Ev::Click, |_| Msg::SendCommand(Command::SwitchToPlayer(
+                            PlayerType::MPD
+                        )))
+                    ]
+                ],
+                div![
+                    C!["level-item"],
+                    button![
+                        IF!(true || pt == PlayerType::SPF=> attrs!{"disabled"=>true}),
+                        C!["button", "is-small"],
+                        span![C!("icon"), i![C!("fab fa-spotify")]],
+                        span!("Spotify"),
+                        ev(Ev::Click, |_| Msg::SendCommand(Command::SwitchToPlayer(
+                            PlayerType::SPF
+                        )))
+                    ]
+                ],
+                div![
+                    C!["level-item"],
+                    button![
+                        IF!(pt == PlayerType::LMS=> attrs!{"disabled"=>true}),
+                        C!["button", "is-small"],
+                        span![C!("icon"), i![C!("fas fa-compact-disc")]],
+                        span!("LMS"),
+                        ev(Ev::Click, |_| Msg::SendCommand(Command::SwitchToPlayer(
+                            PlayerType::LMS
+                        )))
+                    ]
+                ],
+            ]
         ]
     ]
+}
+
+async fn get_album_image_from_lastfm_api(album: String, artist: String) -> Option<Image> {
+    let response = fetch(format!("http://ws.audioscrobbler.com/2.0/?method=album.getinfo&album={}&artist={}&api_key=3b3df6c5dd3ad07222adc8dd3ccd8cdc&format=json", album, artist)).await;
+    if let Ok(response) = response {
+        let info = response.json::<AlbumInfo>().await;
+        if let Ok(info) = info {
+            info.album
+                .image
+                .into_iter()
+                .filter(|i| i.size == "mega" && i.text.len() > 0)
+                .next()
+        } else {
+            log!("Failed to get album info {}", info);
+            None
+        }
+    } else if let Err(e) = response {
+        log!("Error getting album info from last.fm {}", e);
+        None
+    } else {
+        None
+    }
+}
+
+fn create_websocket(orders: &impl Orders<Msg>) -> WebSocket {
+    let msg_sender = orders.msg_sender();
+
+    WebSocket::builder(WS_URL, orders)
+        .on_open(|| Msg::WebSocketOpened)
+        .on_message(move |msg| decode_message(msg, msg_sender))
+        .on_close(Msg::WebSocketClosed)
+        .on_error(|| Msg::WebSocketFailed)
+        .build_and_open()
+        .unwrap()
+}
+
+fn decode_message(message: WebSocketMessage, msg_sender: Rc<dyn Fn(Option<Msg>)>) {
+    let msg_text = message.text();
+    if let Ok(_) = msg_text {
+        let msg = message
+            .json::<StatusChangeEvent>()
+            .expect("Failed to decode WebSocket text message");
+        msg_sender(Some(Msg::StatusChangeEventReceived(msg)));
+    }
+}
+
+fn get_background_image(model: &Model) -> String {
+    if let Some(ps) = model.current_track_info.as_ref() {
+        format!("url({})", ps.uri.as_ref().map_or("", |f| f))
+    } else {
+        String::new()
+    }
 }

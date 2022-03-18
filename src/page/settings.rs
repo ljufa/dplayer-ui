@@ -1,113 +1,21 @@
 use std::collections::HashMap;
 
+use api_models::player::*;
+use api_models::settings::*;
 use indexmap::IndexMap;
 use seed::{prelude::*, *};
 
-const API_SETTINGS_PATH: &str = "/api/settings";
-// ------ ------
-//     Init
-// ------ ------
-pub(crate) fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
-    log!("Settings Init called");
-    orders.perform_cmd(async {
-        let response = fetch(API_SETTINGS_PATH)
-            .await
-            .expect("Failed to get settings from dplayer backend");
+use crate::Urls;
 
-        let sett = response
-            .json::<Settings>()
-            .await
-            .expect("failed to deserialize to Configuration");
-        log!("Remote settings {}", sett);
-        Msg::RemoteConfiguration(sett)
-    });
-    Model {
-        settings: Settings::default(),
-        waiting_response: false,
-    }
-}
+const API_SETTINGS_PATH: &str = "/api/settings";
 
 // ------ ------
 //     Model
 #[derive(Debug)]
 pub struct Model {
+    base_url: Url,
     settings: Settings,
     waiting_response: bool,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
-pub struct Settings {
-    pub spotify_settings: SpotifySettings,
-    pub lms_settings: LmsSettings,
-    pub mpd_settings: MpdSettings,
-    pub dac_settings: DacSettings,
-    pub alsa_settings: AlsaSettings,
-    pub ir_control_settings: IRInputControlerSettings,
-    pub oled_settings: OLEDSettings,
-}
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
-pub struct SpotifySettings {
-    pub enabled: bool,
-    pub device_name: String,
-    pub username: String,
-    pub password: String,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
-pub struct LmsSettings {
-    pub enabled: bool,
-    pub cli_port: u32,
-    pub server_host: String,
-    pub server_port: u32,
-    pub alsa_pcm_device_name: String,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
-pub struct MpdSettings {
-    pub enabled: bool,
-    pub server_host: String,
-    pub server_port: u32,
-}
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
-pub struct AlsaSettings {
-    pub device_name: String,
-    #[serde(skip_deserializing)]
-    pub available_alsa_pcm_devices: HashMap<String, String>,
-    #[serde(skip_deserializing)]
-    pub available_alsa_control_devices: HashMap<String, String>,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
-pub struct DacSettings {
-    pub enabled: bool,
-    pub chip_id: String,
-    pub i2c_address: u16,
-    pub volume_step: u8,
-    #[serde(skip_deserializing)]
-    pub available_dac_chips: HashMap<String, String>,
-}
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
-pub struct IRInputControlerSettings {
-    pub enabled: bool,
-    pub input_socket_path: String,
-}
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default, Clone)]
-pub struct OLEDSettings {
-    pub enabled: bool,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Settings {
-            alsa_settings: AlsaSettings::default(),
-            dac_settings: DacSettings::default(),
-            lms_settings: LmsSettings::default(),
-            mpd_settings: MpdSettings::default(),
-            spotify_settings: SpotifySettings::default(),
-            ir_control_settings: IRInputControlerSettings::default(),
-            oled_settings: OLEDSettings::default(),
-        }
-    }
 }
 
 pub(crate) enum Msg {
@@ -130,6 +38,30 @@ pub(crate) enum Msg {
     SettingsSaved(fetch::Result<Settings>),
 
     RemoteConfiguration(Settings),
+}
+
+// ------ ------
+//     Init
+// ------ ------
+pub(crate) fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
+    log!("Settings Init called");
+    orders.perform_cmd(async {
+        let response = fetch(API_SETTINGS_PATH)
+            .await
+            .expect("Failed to get settings from dplayer backend");
+
+        let sett = response
+            .json::<Settings>()
+            .await
+            .expect("failed to deserialize to Configuration");
+        log!("Remote settings {}", sett);
+        Msg::RemoteConfiguration(sett)
+    });
+    Model {
+        base_url: url.to_hash_base_url(),
+        settings: Settings::default(),
+        waiting_response: false,
+    }
 }
 
 // ------ ------
@@ -215,7 +147,31 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
                 ]
             ]
         ],
+        view_navbar(),
         view_settings(&model.settings)
+    ]
+}
+
+// ----- view_navbar ------
+
+fn view_navbar() -> Node<Msg> {
+    nav![
+        C!["navbar", "is-dark"],
+        attrs! {
+            At::from("role") => "navigation",
+            At::AriaLabel => "main navigation",
+        },
+        div![
+            C!["navbar-menu", "is-active"],
+            div![
+                C!["navbar-start"],
+                a![
+                    C!["navbar-item",],
+                    attrs! {At::Href => Urls::player_abs()},
+                    "Player",
+                ],
+            ]
+        ]
     ]
 }
 
@@ -334,6 +290,14 @@ fn view_settings(settings: &Settings) -> Node<Msg> {
                     "Save",
                     ev(Ev::Click, |_| Msg::SaveSettings)
                 ]
+            ],
+            div![
+                C!("control"),
+                button![
+                    C!["button", "is-dark"],
+                    "Back",
+                    ev(Ev::Click, |_| Urls::player_abs().go_and_load())
+                ]
             ]
         ]
     ]
@@ -359,6 +323,34 @@ fn view_dac(dac_settings: &DacSettings) -> Node<Msg> {
             div![
                 C!["control"],
                 input![C!["input"], attrs! {At::Value => dac_settings.i2c_address},],
+            ],
+        ],
+        div![
+            C!["field"],
+            label!["DAC digital filter:", C!["label"]],
+            div![
+                C!["control"],
+                div![
+                    C!["select"],
+                    // select![
+                    //     FilterType::iter()
+                    //         .map(|f| {
+                    //             let fs: &'static str = f.into();
+                    //             let is_selected = FilterType::from_str(fs).unwrap()
+                    //                 == model.streamer_status.dac_status.filter;
+                    //             (fs, is_selected)
+                    //         })
+                    //         .map(|(fs, is_selected)| option![
+                    //             attrs! {At::Value => fs },
+                    //             IF!(is_selected => attrs!{At::Selected => ""}),
+                    //             fs
+                    //         ]),
+                    //     input_ev(Ev::Change, move |selected| Msg::SendCommand(
+                    //         Command::Filter(FilterType::from_str(selected.as_str()).unwrap())
+                    //     )),
+                    // ],
+                ],
+                
             ],
         ]
     ]
