@@ -1,13 +1,11 @@
 use api_models::player::*;
 use seed::{prelude::*, *};
-use strum::IntoEnumIterator;
-use strum_macros::{EnumIter, EnumString, IntoStaticStr};
+
+
 
 use std::{
-    fmt::{Display, Write},
     rc::Rc,
     str::FromStr,
-    time::Duration,
 };
 
 use crate::Urls;

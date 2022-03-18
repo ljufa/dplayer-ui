@@ -1,4 +1,4 @@
-use indexmap::IndexMap;
+
 use seed::{prelude::*, *};
 mod page;
 
