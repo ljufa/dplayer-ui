@@ -448,14 +448,14 @@ fn view_controls_down(
     streamer_status: &StreamerStatus,
 ) -> Node<Msg> {
     let audio_out = match streamer_status.selected_audio_output {
-        AudioOut::SPKR => "speaker",
-        AudioOut::HEAD => "headphones",
+        AudioOut::SPKR => "fa-volume-high",
+        AudioOut::HEAD => "fa-headphones",
     };
-    let shuffle = player_info.map_or("shuffle", |r| {
+    let shuffle = player_info.map_or("fa-random", |r| {
         if r.random.unwrap_or(false) {
-            "shuffle_on"
+            "fa-random"
         } else {
-            "shuffle"
+            "fa-right-left"
         }
     });
 
@@ -470,16 +470,16 @@ fn view_controls_down(
                     div![
                         C!["level-item"],
                         button![
-                            C!["button", IF!(shuffle == "shuffle_on" => "is-active")],
+                            C!["button", IF!(shuffle == "fa-random" => "is-active")],
                             ev(Ev::Click, |_| Msg::SendCommand(Command::RandomToggle)),
-                            span![C!("icon"), i![C!("material-icons"), shuffle]]
+                            span![C!("icon"), i![C!("fa", shuffle)]]
                         ]
                     ],
                     div![
                         C!["level-item"],
                         button![
                             C!["button"],
-                            span![C!("icon"), i![C!("material-icons"), audio_out]],
+                            span![C!("icon"), i![C!("fa", audio_out)]],
                             ev(Ev::Click, |_| Msg::SendCommand(Command::ChangeAudioOutput))
                         ]
                     ],
@@ -622,8 +622,8 @@ async fn get_album_image_from_lastfm_api(album: String, artist: String) -> Optio
             info.album
                 .image
                 .into_iter()
-                .filter(|i| i.size == "mega" && i.text.len() > 0)
-                .next()
+                .find(|i| i.size == "mega" && !i.text.is_empty())
+                
         } else {
             log!("Failed to get album info {}", info);
             None
@@ -650,7 +650,7 @@ fn create_websocket(orders: &impl Orders<Msg>) -> WebSocket {
 
 fn decode_message(message: WebSocketMessage, msg_sender: Rc<dyn Fn(Option<Msg>)>) {
     let msg_text = message.text();
-    if let Ok(_) = msg_text {
+    if msg_text.is_ok() {
         let msg = message
             .json::<StatusChangeEvent>()
             .expect("Failed to decode WebSocket text message");
