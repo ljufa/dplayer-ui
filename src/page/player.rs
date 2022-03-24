@@ -1,12 +1,7 @@
-use api_models::player::*;
+use api_models::{player::*, playlist::Playlist};
 use seed::{prelude::*, *};
 
-
-
-use std::{
-    rc::Rc,
-    str::FromStr,
-};
+use std::{rc::Rc, str::FromStr};
 
 use crate::Urls;
 
@@ -25,6 +20,7 @@ pub struct Model {
     web_socket_reconnector: Option<StreamHandle>,
     waiting_response: bool,
     remote_error: Option<String>,
+    playlists: Vec<Playlist>,
 }
 
 pub enum Msg {
@@ -36,6 +32,8 @@ pub enum Msg {
     ReconnectWebSocket(usize),
     SendCommand(Command),
     AlbumImageUpdated(Image),
+
+    PlaylistsFetched(fetch::Result<Vec<Playlist>>),
 }
 #[derive(Debug, serde::Deserialize)]
 pub struct AlbumInfo {
@@ -57,6 +55,7 @@ pub struct Image {
 // ------ ------
 
 pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
+    orders.perform_cmd(async { Msg::PlaylistsFetched(get_playlists().await) });
     Model {
         streamer_status: StreamerStatus {
             source_player: PlayerType::MPD,
@@ -69,6 +68,7 @@ pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
         web_socket_reconnector: None,
         waiting_response: false,
         remote_error: None,
+        playlists: Vec::new(),
     }
 }
 
@@ -177,8 +177,12 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
         Msg::StatusChangeEventReceived(StatusChangeEvent::Error(error)) => {
             model.remote_error = Some(error)
         }
-        Msg::StatusChangeEventReceived(_) => {
-
+        Msg::StatusChangeEventReceived(_) => {}
+        Msg::PlaylistsFetched(Ok(plist)) => {
+            model.playlists = plist;
+        }
+        _ => {
+            log!("Unknown variant");
         }
     }
 }
@@ -231,6 +235,7 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
             view_volume_slider(&model.streamer_status.dac_status),
             view_controls_down(model.player_info.as_ref(), &model.streamer_status),
             view_player_switch(model),
+            view_playlist_selector(model),
         ]
     ]
 }
@@ -446,10 +451,13 @@ fn view_controls_down(
         AudioOut::SPKR => "speaker",
         AudioOut::HEAD => "headphones",
     };
-    let shuffle = player_info.map_or(
-        "shuffle",
-        |r| if r.random.unwrap_or(false) { "shuffle_on" } else { "shuffle" },
-    );
+    let shuffle = player_info.map_or("shuffle", |r| {
+        if r.random.unwrap_or(false) {
+            "shuffle_on"
+        } else {
+            "shuffle"
+        }
+    });
 
     div![
         C!["transparent"],
@@ -568,6 +576,42 @@ fn view_player_switch(model: &Model) -> Node<Msg> {
             ]
         ]
     ]
+}
+
+fn view_playlist_selector(model: &Model) -> Node<Msg> {
+    div![
+        C!["transparent", "field"],
+        label![C![
+            "is-size-6",
+            "has-text-light",
+            "has-background-dark-transparent"
+        ], "Saved playlists:"],
+        div![
+            C!["control"],
+            div![
+                C!["select"],
+                select![
+                    model
+                        .playlists
+                        .iter()
+                        .map(|pl| option![attrs! {At::Value => &pl.name }, &pl.name]),
+                    input_ev(Ev::Change, move |selected| Msg::SendCommand(
+                        Command::LoadPlaylist(selected)
+                    )),
+                ]
+            ]
+        ]
+    ]
+}
+
+pub async fn get_playlists() -> fetch::Result<Vec<Playlist>> {
+    Request::new("/api/playlists")
+        .method(Method::Get)
+        .fetch()
+        .await?
+        .check_status()?
+        .json::<Vec<Playlist>>()
+        .await
 }
 
 async fn get_album_image_from_lastfm_api(album: String, artist: String) -> Option<Image> {

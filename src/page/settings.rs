@@ -1,6 +1,3 @@
-
-
-
 use api_models::settings::*;
 use indexmap::IndexMap;
 use seed::{prelude::*, *};
@@ -252,8 +249,11 @@ fn view_settings(settings: &Settings) -> Node<Msg> {
                 div![
                     C!["select"],
                     select![
-                        option![attrs! {At::Value => "waveIO"}, "WaveIO USB"],
-                        option![attrs! {At::Value => "amanero"}, "Amanero USB"],
+                        settings
+                        .alsa_settings
+                        .available_alsa_pcm_devices
+                        .iter()
+                        .map(|d| option![attrs! {At::Value => d.0}, d.1], )
                     ],
                 ],
             ]
@@ -350,7 +350,6 @@ fn view_dac(dac_settings: &DacSettings) -> Node<Msg> {
                     //     )),
                     // ],
                 ],
-                
             ],
         ]
     ]

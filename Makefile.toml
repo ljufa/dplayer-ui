@@ -1,6 +1,6 @@
 
 [env]
-PORT = "8000"
+PORT = "8001"
 
 [config]
 skip_core_tasks = true
@@ -78,6 +78,13 @@ script = [
     "rsync -av public/ ubuntu@${RPI_HOST}:${RPI_DIR}"
 ]
 
+
+[tasks.copylocal]
+dependencies = ["build_dev"]
+script = [
+    "rsync -av pkg ../dplayer/.dplay/ui",
+    "rsync -av public/ ../dplayer/.dplay/ui"
+]
 
 
 
