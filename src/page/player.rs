@@ -1,4 +1,7 @@
-use api_models::{player::*, playlist::Playlist};
+use api_models::{
+    player::*,
+    playlist::{Playlist, QueueItem},
+};
 use seed::{prelude::*, *};
 
 use std::{rc::Rc, str::FromStr};
@@ -15,12 +18,14 @@ const WS_URL: &str = "ws://192.168.5.59:8000/api/player";
 pub struct Model {
     streamer_status: StreamerStatus,
     player_info: Option<PlayerInfo>,
-    current_track_info: Option<CurrentTrackInfo>,
+    current_track_info: Option<Track>,
     web_socket: WebSocket,
     web_socket_reconnector: Option<StreamHandle>,
     waiting_response: bool,
     remote_error: Option<String>,
     playlists: Vec<Playlist>,
+    show_queue: bool,
+    queue_items: Vec<QueueItem>,
 }
 
 pub enum Msg {
@@ -32,8 +37,9 @@ pub enum Msg {
     ReconnectWebSocket(usize),
     SendCommand(Command),
     AlbumImageUpdated(Image),
-
     PlaylistsFetched(fetch::Result<Vec<Playlist>>),
+    ShowQueueClicked,
+    QueueFetched(fetch::Result<Vec<QueueItem>>),
 }
 #[derive(Debug, serde::Deserialize)]
 pub struct AlbumInfo {
@@ -69,6 +75,8 @@ pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
         waiting_response: false,
         remote_error: None,
         playlists: Vec::new(),
+        show_queue: false,
+        queue_items: Vec::new(),
     }
 }
 
@@ -181,6 +189,17 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
         Msg::PlaylistsFetched(Ok(plist)) => {
             model.playlists = plist;
         }
+        Msg::ShowQueueClicked => {
+            model.show_queue = not(model.show_queue);
+            if model.show_queue {
+                model.waiting_response = true;
+                orders.perform_cmd(async { Msg::QueueFetched(get_queue_items().await) });
+            }
+        }
+        Msg::QueueFetched(Ok(items)) => {
+            model.waiting_response = false;
+            model.queue_items = items;
+        }
         _ => {
             log!("Unknown variant");
         }
@@ -221,29 +240,30 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
                 ]
             ]
         ],
-        div![
-            style! {
-                St::Background => "rgba(86, 92, 86, 0.507)",
-                St::MinHeight => "100vh"
-            },
-            view_track_info(
-                model.current_track_info.as_ref(),
-                model.player_info.as_ref()
-            ),
-            view_track_progress_bar(model.player_info.as_ref()),
-            view_controls(model.player_info.as_ref()),
-            view_volume_slider(&model.streamer_status.dac_status),
-            view_controls_down(model.player_info.as_ref(), &model.streamer_status),
-            view_player_switch(model),
-            view_playlist_selector(model),
-        ]
+        if model.show_queue {
+            empty!()
+        } else {
+            div![
+                style! {
+                    St::Background => "rgba(86, 92, 86, 0.507)",
+                    St::MinHeight => "100vh"
+                },
+                view_track_info(
+                    model.current_track_info.as_ref(),
+                    model.player_info.as_ref()
+                ),
+                view_track_progress_bar(model.player_info.as_ref()),
+                view_controls(model.player_info.as_ref()),
+                view_volume_slider(&model.streamer_status.dac_status),
+                view_controls_down(model.player_info.as_ref(), &model.streamer_status),
+                view_player_switch(model),
+                view_playlist_selector(model),
+            ]
+        }
     ]
 }
 
-fn view_track_info(
-    status: Option<&CurrentTrackInfo>,
-    player_info: Option<&PlayerInfo>,
-) -> Node<Msg> {
+fn view_track_info(status: Option<&Track>, player_info: Option<&PlayerInfo>) -> Node<Msg> {
     if let Some(ps) = status {
         div![
             style! {
@@ -491,6 +511,14 @@ fn view_controls_down(
                             ev(Ev::Click, |_| { Urls::settings_abs().go_and_load() }),
                         ]
                     ],
+                    div![
+                        C!["level-item"],
+                        button![
+                            C!["button"],
+                            span![C!("icon"), i![C!("fa fa-list")]],
+                            ev(Ev::Click, |_| { Msg::ShowQueueClicked }),
+                        ]
+                    ],
                 ]
             ]
         ]
@@ -581,11 +609,14 @@ fn view_player_switch(model: &Model) -> Node<Msg> {
 fn view_playlist_selector(model: &Model) -> Node<Msg> {
     div![
         C!["transparent", "field"],
-        label![C![
-            "is-size-6",
-            "has-text-light",
-            "has-background-dark-transparent"
-        ], "Saved playlists:"],
+        label![
+            C![
+                "is-size-6",
+                "has-text-light",
+                "has-background-dark-transparent"
+            ],
+            "Saved playlists:"
+        ],
         div![
             C!["control"],
             div![
@@ -613,6 +644,15 @@ pub async fn get_playlists() -> fetch::Result<Vec<Playlist>> {
         .json::<Vec<Playlist>>()
         .await
 }
+pub async fn get_queue_items() -> fetch::Result<Vec<QueueItem>> {
+    Request::new("/api/queue")
+        .method(Method::Get)
+        .fetch()
+        .await?
+        .check_status()?
+        .json::<Vec<QueueItem>>()
+        .await
+}
 
 async fn get_album_image_from_lastfm_api(album: String, artist: String) -> Option<Image> {
     let response = fetch(format!("http://ws.audioscrobbler.com/2.0/?method=album.getinfo&album={}&artist={}&api_key=3b3df6c5dd3ad07222adc8dd3ccd8cdc&format=json", album, artist)).await;
@@ -623,7 +663,6 @@ async fn get_album_image_from_lastfm_api(album: String, artist: String) -> Optio
                 .image
                 .into_iter()
                 .find(|i| i.size == "mega" && !i.text.is_empty())
-                
         } else {
             log!("Failed to get album info {}", info);
             None

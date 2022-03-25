@@ -19,8 +19,8 @@ struct Model {
 enum Msg {
     UrlChanged(subs::UrlChanged),
     ToggleMenu,
-    SettingsMsg(page::settings::Msg),
-    PlayerMsg(page::player::Msg),
+    Settings(page::settings::Msg),
+    Player(page::player::Msg),
 }
 
 // ------ Page ------
@@ -38,9 +38,9 @@ impl Page {
             [FIRST_SETUP] => Self::Home,
             [SETTINGS] => Self::Settings(page::settings::init(
                 url,
-                &mut orders.proxy(Msg::SettingsMsg),
+                &mut orders.proxy(Msg::Settings),
             )),
-            [] => Self::Player(page::player::init(url, &mut orders.proxy(Msg::PlayerMsg))),
+            [] => Self::Player(page::player::init(url, &mut orders.proxy(Msg::Player))),
             _ => Self::NotFound,
         }
     }
@@ -57,9 +57,6 @@ impl<'a> Urls<'a> {
     }
     fn settings_abs() -> Url {
         Url::new().add_hash_path_part(SETTINGS)
-    }
-    fn player(self) -> Url {
-        self.base_url()
     }
 
     fn player_abs() -> Url {
@@ -88,14 +85,14 @@ fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>) {
     match msg {
         Msg::UrlChanged(subs::UrlChanged(url)) => model.page = Page::init(url, orders),
         Msg::ToggleMenu => model.menu_visible = not(model.menu_visible),
-        Msg::SettingsMsg(msg) => {
+        Msg::Settings(msg) => {
             if let Page::Settings(model) = &mut model.page {
-                page::settings::update(msg, model, &mut orders.proxy(Msg::SettingsMsg))
+                page::settings::update(msg, model, &mut orders.proxy(Msg::Settings));
             }
         }
-        Msg::PlayerMsg(msg) => {
+        Msg::Player(msg) => {
             if let Page::Player(model) = &mut model.page {
-                page::player::update(msg, model, &mut orders.proxy(Msg::PlayerMsg))
+                page::player::update(msg, model, &mut orders.proxy(Msg::Player));
             }
         }
     }
@@ -117,8 +114,8 @@ fn view_content(page: &Page, base_url: &Url) -> Node<Msg> {
         match page {
             Page::Home => page::home::view(base_url),
             Page::NotFound => page::not_found::view(),
-            Page::Settings(model) => page::settings::view(model).map_msg(Msg::SettingsMsg),
-            Page::Player(model) => page::player::view(model).map_msg(Msg::PlayerMsg),
+            Page::Settings(model) => page::settings::view(model).map_msg(Msg::Settings),
+            Page::Player(model) => page::player::view(model).map_msg(Msg::Player),
         }
     ]
 }
