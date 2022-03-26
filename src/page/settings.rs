@@ -1,6 +1,12 @@
-use api_models::settings::*;
-use indexmap::IndexMap;
+use api_models::{
+    player::{Command, FilterType},
+    settings::*,
+};
 use seed::{prelude::*, *};
+use std::{str::FromStr};
+use strum::IntoEnumIterator;
+
+
 
 use crate::Urls;
 
@@ -10,12 +16,12 @@ const API_SETTINGS_PATH: &str = "/api/settings";
 //     Model
 #[derive(Debug)]
 pub struct Model {
-    base_url: Url,
     settings: Settings,
     waiting_response: bool,
 }
 
-pub(crate) enum Msg {
+#[derive(Debug)]
+pub enum Msg {
     // ---- on off toggles ----
     ToggleDacEnabled,
     ToggleSpotifyEnabled,
@@ -35,12 +41,13 @@ pub(crate) enum Msg {
     SettingsSaved(fetch::Result<Settings>),
 
     RemoteConfiguration(Settings),
+    SendCommand(Command),
 }
 
 // ------ ------
 //     Init
 // ------ ------
-pub(crate) fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
+pub(crate) fn init(_url: Url, orders: &mut impl Orders<Msg>) -> Model {
     log!("Settings Init called");
     orders.perform_cmd(async {
         let response = fetch(API_SETTINGS_PATH)
@@ -51,11 +58,9 @@ pub(crate) fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
             .json::<Settings>()
             .await
             .expect("failed to deserialize to Configuration");
-        log!("Remote settings {}", sett);
         Msg::RemoteConfiguration(sett)
     });
     Model {
-        base_url: url.to_hash_base_url(),
         settings: Settings::default(),
         waiting_response: false,
     }
@@ -101,6 +106,7 @@ pub(crate) fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>)
             log!("Saved settings with result {}", saved);
             model.waiting_response = false;
         }
+        _ => {}
     }
 }
 
@@ -144,31 +150,7 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
                 ]
             ]
         ],
-        view_navbar(),
         view_settings(&model.settings)
-    ]
-}
-
-// ----- view_navbar ------
-
-fn view_navbar() -> Node<Msg> {
-    nav![
-        C!["navbar", "is-dark"],
-        attrs! {
-            At::from("role") => "navigation",
-            At::AriaLabel => "main navigation",
-        },
-        div![
-            C!["navbar-menu", "is-active"],
-            div![
-                C!["navbar-start"],
-                a![
-                    C!["navbar-item",],
-                    attrs! {At::Href => Urls::player_abs()},
-                    "Player",
-                ],
-            ]
-        ]
     ]
 }
 
@@ -248,13 +230,11 @@ fn view_settings(settings: &Settings) -> Node<Msg> {
                 label!["Alsa audio device:", C!["label"]],
                 div![
                     C!["select"],
-                    select![
-                        settings
+                    select![settings
                         .alsa_settings
                         .available_alsa_pcm_devices
                         .iter()
-                        .map(|d| option![attrs! {At::Value => d.0}, d.1], )
-                    ],
+                        .map(|d| option![attrs! {At::Value => d.0}, d.1],)],
                 ],
             ]
         ],
@@ -332,23 +312,12 @@ fn view_dac(dac_settings: &DacSettings) -> Node<Msg> {
                 C!["control"],
                 div![
                     C!["select"],
-                    // select![
-                    //     FilterType::iter()
-                    //         .map(|f| {
-                    //             let fs: &'static str = f.into();
-                    //             let is_selected = FilterType::from_str(fs).unwrap()
-                    //                 == model.streamer_status.dac_status.filter;
-                    //             (fs, is_selected)
-                    //         })
-                    //         .map(|(fs, is_selected)| option![
-                    //             attrs! {At::Value => fs },
-                    //             IF!(is_selected => attrs!{At::Selected => ""}),
-                    //             fs
-                    //         ]),
-                    //     input_ev(Ev::Change, move |selected| Msg::SendCommand(
-                    //         Command::Filter(FilterType::from_str(selected.as_str()).unwrap())
-                    //     )),
-                    // ],
+                    select![
+                        FilterType::iter().map(|fs| option![format!("{:?}", fs)]),
+                        input_ev(Ev::Change, move |selected| Msg::SendCommand(
+                            Command::Filter(FilterType::from_str(selected.as_str()).unwrap())
+                        )),
+                    ],
                 ],
             ],
         ]

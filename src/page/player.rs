@@ -1,14 +1,7 @@
-use api_models::{
-    player::*,
-    playlist::{Playlist, QueueItem},
-};
+use api_models::player::*;
 use seed::{prelude::*, *};
 
-use std::{rc::Rc, str::FromStr};
-
-use crate::Urls;
-
-const WS_URL: &str = "ws://192.168.5.59:8000/api/player";
+use std::str::FromStr;
 
 // ------ ------
 //     Model
@@ -18,28 +11,17 @@ const WS_URL: &str = "ws://192.168.5.59:8000/api/player";
 pub struct Model {
     streamer_status: StreamerStatus,
     player_info: Option<PlayerInfo>,
-    current_track_info: Option<Track>,
-    web_socket: WebSocket,
-    web_socket_reconnector: Option<StreamHandle>,
+    current_track_info: Option<Song>,
     waiting_response: bool,
     remote_error: Option<String>,
-    playlists: Vec<Playlist>,
-    show_queue: bool,
-    queue_items: Vec<QueueItem>,
 }
+#[derive(Debug)]
 
 pub enum Msg {
-    WebSocketOpened,
     StatusChangeEventReceived(StatusChangeEvent),
-    CloseWebSocket,
-    WebSocketClosed(CloseEvent),
-    WebSocketFailed,
-    ReconnectWebSocket(usize),
-    SendCommand(Command),
     AlbumImageUpdated(Image),
-    PlaylistsFetched(fetch::Result<Vec<Playlist>>),
-    ShowQueueClicked,
-    QueueFetched(fetch::Result<Vec<QueueItem>>),
+    SendCommand(Command),
+    CurrentStatusFetched(fetch::Result<LastStatus>),
 }
 #[derive(Debug, serde::Deserialize)]
 pub struct AlbumInfo {
@@ -61,7 +43,7 @@ pub struct Image {
 // ------ ------
 
 pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
-    orders.perform_cmd(async { Msg::PlaylistsFetched(get_playlists().await) });
+    orders.perform_cmd(async { Msg::CurrentStatusFetched(get_current_status().await) });
     Model {
         streamer_status: StreamerStatus {
             source_player: PlayerType::MPD,
@@ -70,13 +52,8 @@ pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
         },
         player_info: None,
         current_track_info: None,
-        web_socket: create_websocket(orders),
-        web_socket_reconnector: None,
         waiting_response: false,
         remote_error: None,
-        playlists: Vec::new(),
-        show_queue: false,
-        queue_items: Vec::new(),
     }
 }
 
@@ -86,88 +63,25 @@ pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
 
 pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
     match msg {
-        Msg::WebSocketOpened => {
-            model.web_socket_reconnector = None;
-            log!("WebSocket connection is open now");
-        }
-
         Msg::AlbumImageUpdated(image) => {
             model.current_track_info.as_mut().unwrap().uri = Some(image.text);
         }
-
-        Msg::CloseWebSocket => {
-            model.web_socket_reconnector = None;
-            model
-                .web_socket
-                .close(None, Some("user clicked Close button"))
-                .unwrap();
-        }
-
-        Msg::WebSocketClosed(close_event) => {
-            log!("==================");
-            log!("WebSocket connection was closed:");
-            log!("Clean:", close_event.was_clean());
-            log!("Code:", close_event.code());
-            log!("Reason:", close_event.reason());
-            log!("==================");
-
-            // Chrome doesn't invoke `on_error` when the connection is lost.
-            if !close_event.was_clean() && model.web_socket_reconnector.is_none() {
-                model.web_socket_reconnector = Some(
-                    orders.stream_with_handle(streams::backoff(None, Msg::ReconnectWebSocket)),
-                );
+        Msg::CurrentStatusFetched(Ok(st)) => {
+            let track = st.current_track_info.clone();
+            model.current_track_info = st.current_track_info;
+            model.player_info = st.player_info;
+            if let Some(status) = st.streamer_status {
+                model.streamer_status = status;
+            }
+            if let Some(track) = track {
+                orders.perform_cmd(async { update_album_cover(track).await });
             }
         }
-
-        Msg::WebSocketFailed => {
-            log!("WebSocket failed");
-            if model.web_socket_reconnector.is_none() {
-                model.web_socket_reconnector = Some(
-                    orders.stream_with_handle(streams::backoff(None, Msg::ReconnectWebSocket)),
-                );
-            }
-        }
-
-        Msg::ReconnectWebSocket(retries) => {
-            log!("Reconnect attempt:", retries);
-            model.web_socket = create_websocket(orders);
-        }
-
-        Msg::SendCommand(cmd) => {
-            match cmd {
-                Command::SwitchToPlayer(_) => model.waiting_response = true,
-                Command::SetVol(vol) => model.streamer_status.dac_status.volume = vol,
-                _ => (),
-            }
-
-            model.web_socket.send_json(&cmd).unwrap();
-        }
-
         Msg::StatusChangeEventReceived(StatusChangeEvent::CurrentTrackInfoChanged(track_info)) => {
             model.waiting_response = false;
-            let ps = track_info;
-            model.current_track_info = Some(ps.clone());
-            if ps.uri.is_none() {
-                orders.perform_cmd(async {
-                    if ps.album.is_some() && ps.artist.is_some() {
-                        let ai =
-                            get_album_image_from_lastfm_api(ps.album.unwrap(), ps.artist.unwrap())
-                                .await;
-                        match ai {
-                            Some(ai) => Msg::AlbumImageUpdated(ai),
-                            None => Msg::AlbumImageUpdated(Image {
-                                size: "mega".to_string(),
-                                text: "/no_album.png".to_string(),
-                            }),
-                        }
-                    } else {
-                        Msg::AlbumImageUpdated(Image {
-                            size: "mega".to_string(),
-                            text: "/no_album.png".to_string(),
-                        })
-                    }
-                });
-            }
+            let ps = track_info.clone();
+            model.current_track_info = Some(track_info);
+            orders.perform_cmd(async { update_album_cover(ps).await });
         }
 
         Msg::StatusChangeEventReceived(StatusChangeEvent::PlayerInfoChanged(player_info)) => {
@@ -186,19 +100,13 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
             model.remote_error = Some(error)
         }
         Msg::StatusChangeEventReceived(_) => {}
-        Msg::PlaylistsFetched(Ok(plist)) => {
-            model.playlists = plist;
-        }
-        Msg::ShowQueueClicked => {
-            model.show_queue = not(model.show_queue);
-            if model.show_queue {
-                model.waiting_response = true;
-                orders.perform_cmd(async { Msg::QueueFetched(get_queue_items().await) });
+        Msg::SendCommand(cmd) => {
+            log!("Player {}", cmd);
+            match cmd {
+                Command::SwitchToPlayer(_) => model.waiting_response = true,
+                Command::SetVol(vol) => model.streamer_status.dac_status.volume = vol,
+                _ => (),
             }
-        }
-        Msg::QueueFetched(Ok(items)) => {
-            model.waiting_response = false;
-            model.queue_items = items;
         }
         _ => {
             log!("Unknown variant");
@@ -215,55 +123,26 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
             St::BackgroundImage => get_background_image(model),
             St::BackgroundRepeat => "no-repeat",
             St::BackgroundSize => "cover",
-            St::MinHeight => "100vh"
+            St::MinHeight => "95vh"
         },
-        // spinner
         div![
-            C!["modal", IF!(model.waiting_response => "is-active")],
-            div![C!["modal-background"]],
-            div![
-                C!["modal-content"],
-                div![
-                    C!("sk-fading-circle"),
-                    div![C!["sk-circle1 sk-circle"]],
-                    div![C!["sk-circle2 sk-circle"]],
-                    div![C!["sk-circle3 sk-circle"]],
-                    div![C!["sk-circle4 sk-circle"]],
-                    div![C!["sk-circle5 sk-circle"]],
-                    div![C!["sk-circle6 sk-circle"]],
-                    div![C!["sk-circle7 sk-circle"]],
-                    div![C!["sk-circle8 sk-circle"]],
-                    div![C!["sk-circle9 sk-circle"]],
-                    div![C!["sk-circle10 sk-circle"]],
-                    div![C!["sk-circle11 sk-circle"]],
-                    div![C!["sk-circle12 sk-circle"]],
-                ]
-            ]
-        ],
-        if model.show_queue {
-            empty!()
-        } else {
-            div![
-                style! {
-                    St::Background => "rgba(86, 92, 86, 0.507)",
-                    St::MinHeight => "100vh"
-                },
-                view_track_info(
-                    model.current_track_info.as_ref(),
-                    model.player_info.as_ref()
-                ),
-                view_track_progress_bar(model.player_info.as_ref()),
-                view_controls(model.player_info.as_ref()),
-                view_volume_slider(&model.streamer_status.dac_status),
-                view_controls_down(model.player_info.as_ref(), &model.streamer_status),
-                view_player_switch(model),
-                view_playlist_selector(model),
-            ]
-        }
+            style! {
+                St::Background => "rgba(86, 92, 86, 0.507)",
+                St::MinHeight => "95vh"
+            },
+            view_track_info(
+                model.current_track_info.as_ref(),
+                model.player_info.as_ref()
+            ),
+            view_track_progress_bar(model.player_info.as_ref()),
+            view_volume_slider(&model.streamer_status.dac_status),
+            view_controls(model.player_info.as_ref()),
+            view_controls_down(model.player_info.as_ref(), &model.streamer_status),
+        ]
     ]
 }
 
-fn view_track_info(status: Option<&Track>, player_info: Option<&PlayerInfo>) -> Node<Msg> {
+fn view_track_info(status: Option<&Song>, player_info: Option<&PlayerInfo>) -> Node<Msg> {
     if let Some(ps) = status {
         div![
             style! {
@@ -283,16 +162,16 @@ fn view_track_info(status: Option<&Track>, player_info: Option<&PlayerInfo>) -> 
                         ],
                     ],
                 ]),
-                IF!(ps.name.is_some() && ps.name != ps.title =>
-                div![
-                    C!["level-item"],
-                    div![
-                        p![
-                            C!["has-text-light has-background-dark-transparent"],
-                            ps.name.as_ref().map_or("NA", |f| f)
-                        ],
-                    ],
-                ]),
+                // IF!(ps.name.is_some() && ps.name != ps.title =>
+                // div![
+                //     C!["level-item"],
+                //     div![
+                //         p![
+                //             C!["has-text-light has-background-dark-transparent"],
+                //             ps.name.as_ref().map_or("NA", |f| f)
+                //         ],
+                //     ],
+                // ]),
                 IF!(ps.album.is_some() =>
                 div![
                     C!["level-item"],
@@ -313,12 +192,12 @@ fn view_track_info(status: Option<&Track>, player_info: Option<&PlayerInfo>) -> 
                         ],
                     ],
                 ]),
-                if ps.title.is_none() && ps.filename.is_some() {
+                if ps.title.is_none(){
                     div![
                         C!["level-item"],
                         div![p![
                             C!["has-text-light has-background-dark-transparent"],
-                            ps.filename.as_ref().map_or("NA", |f| f)
+                            ps.file.clone()
                         ],],
                     ]
                 } else {
@@ -468,14 +347,14 @@ fn view_controls_down(
     streamer_status: &StreamerStatus,
 ) -> Node<Msg> {
     let audio_out = match streamer_status.selected_audio_output {
-        AudioOut::SPKR => "fa-volume-high",
-        AudioOut::HEAD => "fa-headphones",
+        AudioOut::SPKR => "speaker",
+        AudioOut::HEAD => "headset",
     };
-    let shuffle = player_info.map_or("fa-random", |r| {
+    let shuffle = player_info.map_or("shuffle", |r| {
         if r.random.unwrap_or(false) {
-            "fa-random"
+            "shuffle"
         } else {
-            "fa-right-left"
+            "format_list_numbered"
         }
     });
 
@@ -490,33 +369,17 @@ fn view_controls_down(
                     div![
                         C!["level-item"],
                         button![
-                            C!["button", IF!(shuffle == "fa-random" => "is-active")],
+                            C!["button"],
+                            span![C!["icon"], i![C!("material-icons"), shuffle]],
                             ev(Ev::Click, |_| Msg::SendCommand(Command::RandomToggle)),
-                            span![C!("icon"), i![C!("fa", shuffle)]]
                         ]
                     ],
                     div![
                         C!["level-item"],
                         button![
                             C!["button"],
-                            span![C!("icon"), i![C!("fa", audio_out)]],
+                            span![C!["icon"], i![C!("material-icons"), audio_out]],
                             ev(Ev::Click, |_| Msg::SendCommand(Command::ChangeAudioOutput))
-                        ]
-                    ],
-                    div![
-                        C!["level-item"],
-                        button![
-                            C!["button"],
-                            span![C!("icon"), i![C!("fa fa-cog")]],
-                            ev(Ev::Click, |_| { Urls::settings_abs().go_and_load() }),
-                        ]
-                    ],
-                    div![
-                        C!["level-item"],
-                        button![
-                            C!["button"],
-                            span![C!("icon"), i![C!("fa fa-list")]],
-                            ev(Ev::Click, |_| { Msg::ShowQueueClicked }),
                         ]
                     ],
                 ]
@@ -549,6 +412,7 @@ fn view_volume_slider(dac_status: &DacStatus) -> Node<Msg> {
             attrs! {"max"=> 255},
             attrs! {"min"=> 140},
             attrs! {"type"=> "range"},
+            attrs! {"disabled"=> "disabled"},
             input_ev(Ev::Change, move |selected| Msg::SendCommand(
                 Command::SetVol(u8::from_str(selected.as_str()).unwrap())
             )),
@@ -556,6 +420,8 @@ fn view_volume_slider(dac_status: &DacStatus) -> Node<Msg> {
     ]
 }
 
+#[allow(clippy::logic_bug)]
+#[allow(dead_code)]
 fn view_player_switch(model: &Model) -> Node<Msg> {
     let pt = model.streamer_status.source_player;
 
@@ -580,6 +446,7 @@ fn view_player_switch(model: &Model) -> Node<Msg> {
                 div![
                     C!["level-item"],
                     button![
+                        
                         IF!(true || pt == PlayerType::SPF=> attrs!{"disabled"=>true}),
                         C!["button", "is-small"],
                         span![C!("icon"), i![C!("fab fa-spotify")]],
@@ -606,54 +473,41 @@ fn view_player_switch(model: &Model) -> Node<Msg> {
     ]
 }
 
-fn view_playlist_selector(model: &Model) -> Node<Msg> {
-    div![
-        C!["transparent", "field"],
-        label![
-            C![
-                "is-size-6",
-                "has-text-light",
-                "has-background-dark-transparent"
-            ],
-            "Saved playlists:"
-        ],
-        div![
-            C!["control"],
-            div![
-                C!["select"],
-                select![
-                    model
-                        .playlists
-                        .iter()
-                        .map(|pl| option![attrs! {At::Value => &pl.name }, &pl.name]),
-                    input_ev(Ev::Change, move |selected| Msg::SendCommand(
-                        Command::LoadPlaylist(selected)
-                    )),
-                ]
-            ]
-        ]
-    ]
+fn get_background_image(model: &Model) -> String {
+    if let Some(ps) = model.current_track_info.as_ref() {
+        format!("url({})", ps.uri.as_ref().map_or("", |f| f))
+    } else {
+        String::new()
+    }
 }
 
-pub async fn get_playlists() -> fetch::Result<Vec<Playlist>> {
-    Request::new("/api/playlists")
+pub async fn get_current_status() -> fetch::Result<LastStatus> {
+    Request::new("/api/status")
         .method(Method::Get)
         .fetch()
         .await?
         .check_status()?
-        .json::<Vec<Playlist>>()
-        .await
-}
-pub async fn get_queue_items() -> fetch::Result<Vec<QueueItem>> {
-    Request::new("/api/queue")
-        .method(Method::Get)
-        .fetch()
-        .await?
-        .check_status()?
-        .json::<Vec<QueueItem>>()
+        .json::<LastStatus>()
         .await
 }
 
+pub async fn update_album_cover(track: Song) -> Msg {
+    if track.album.is_some() && track.artist.is_some() {
+        let ai = get_album_image_from_lastfm_api(track.album.unwrap(), track.artist.unwrap()).await;
+        match ai {
+            Some(ai) => Msg::AlbumImageUpdated(ai),
+            None => Msg::AlbumImageUpdated(Image {
+                size: "mega".to_string(),
+                text: "/no_album.png".to_string(),
+            }),
+        }
+    } else {
+        Msg::AlbumImageUpdated(Image {
+            size: "mega".to_string(),
+            text: "/no_album.png".to_string(),
+        })
+    }
+}
 async fn get_album_image_from_lastfm_api(album: String, artist: String) -> Option<Image> {
     let response = fetch(format!("http://ws.audioscrobbler.com/2.0/?method=album.getinfo&album={}&artist={}&api_key=3b3df6c5dd3ad07222adc8dd3ccd8cdc&format=json", album, artist)).await;
     if let Ok(response) = response {
@@ -672,35 +526,5 @@ async fn get_album_image_from_lastfm_api(album: String, artist: String) -> Optio
         None
     } else {
         None
-    }
-}
-
-fn create_websocket(orders: &impl Orders<Msg>) -> WebSocket {
-    let msg_sender = orders.msg_sender();
-
-    WebSocket::builder(WS_URL, orders)
-        .on_open(|| Msg::WebSocketOpened)
-        .on_message(move |msg| decode_message(msg, msg_sender))
-        .on_close(Msg::WebSocketClosed)
-        .on_error(|| Msg::WebSocketFailed)
-        .build_and_open()
-        .unwrap()
-}
-
-fn decode_message(message: WebSocketMessage, msg_sender: Rc<dyn Fn(Option<Msg>)>) {
-    let msg_text = message.text();
-    if msg_text.is_ok() {
-        let msg = message
-            .json::<StatusChangeEvent>()
-            .expect("Failed to decode WebSocket text message");
-        msg_sender(Some(Msg::StatusChangeEventReceived(msg)));
-    }
-}
-
-fn get_background_image(model: &Model) -> String {
-    if let Some(ps) = model.current_track_info.as_ref() {
-        format!("url({})", ps.uri.as_ref().map_or("", |f| f))
-    } else {
-        String::new()
     }
 }
