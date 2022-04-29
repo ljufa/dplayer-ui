@@ -1,16 +1,18 @@
 use api_models::{
-    player::{Command, FilterType},
+    player::{Command, FilterType, PlayerType},
     settings::*,
+    spotify::SpotifyAccountInfo,
 };
 use seed::{prelude::*, *};
-use std::{str::FromStr};
+use std::str::FromStr;
 use strum::IntoEnumIterator;
-
-
 
 use crate::Urls;
 
 const API_SETTINGS_PATH: &str = "/api/settings";
+const API_SPOTIFY_IS_AUTH_PATH: &str = "/api/spotify/is-authorized";
+const API_SPOTIFY_GET_AUTH_URL_PATH: &str = "/api/spotify/get-url";
+const API_SPOTIFY_GET_ACCOUNT_INFO_PATH: &str = "/api/spotify/me";
 
 // ------ ------
 //     Model
@@ -18,10 +20,15 @@ const API_SETTINGS_PATH: &str = "/api/settings";
 pub struct Model {
     settings: Settings,
     waiting_response: bool,
+    spotify_is_authorized: bool,
+    spotify_auth_url: Option<String>,
+    spotify_account_info: Option<SpotifyAccountInfo>,
 }
 
 #[derive(Debug)]
 pub enum Msg {
+    SelectActivePlayer(String),
+
     // ---- on off toggles ----
     ToggleDacEnabled,
     ToggleSpotifyEnabled,
@@ -32,9 +39,18 @@ pub enum Msg {
     InputMpdHostChange(String),
     InputMpdPortChange(u32),
     InputLMSHostChange,
-    InputSpotifyDeviceNameChange,
-    InputSpotifyUsernameChange,
-    InputSpotifyPasswordChange,
+    InputSpotifyDeviceNameChange(String),
+    InputSpotifyUsernameChange(String),
+    InputSpotifyPasswordChange(String),
+
+    InputSpotifyDeveloperClientId(String),
+    InputSpotifyDeveloperClientSecret(String),
+    InputSpotifyAuthCallbackUrl(String),
+    InputSpotifyAlsaDeviceName(String),
+
+    SpotifyIsAuthorizedFetched(String),
+    SpotifyAccountInfoFetched(SpotifyAccountInfo),
+    SpotifyAuthorizationUrlFetched(String),
 
     // --- Buttons ----
     SaveSettings,
@@ -60,9 +76,32 @@ pub(crate) fn init(_url: Url, orders: &mut impl Orders<Msg>) -> Model {
             .expect("failed to deserialize to Configuration");
         Msg::RemoteConfiguration(sett)
     });
+    orders.perform_cmd(async {
+        Msg::SpotifyIsAuthorizedFetched(
+            fetch(API_SPOTIFY_IS_AUTH_PATH)
+                .await
+                .expect("")
+                .text()
+                .await
+                .unwrap(),
+        )
+    });
+    orders.perform_cmd(async {
+        Msg::SpotifyAccountInfoFetched(
+            fetch(API_SPOTIFY_GET_ACCOUNT_INFO_PATH)
+                .await
+                .expect("")
+                .json::<SpotifyAccountInfo>()
+                .await
+                .unwrap(),
+        )
+    });
     Model {
         settings: Settings::default(),
         waiting_response: false,
+        spotify_is_authorized: false,
+        spotify_auth_url: None,
+        spotify_account_info: None,
     }
 }
 
@@ -76,6 +115,9 @@ pub(crate) fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>)
             let settings = model.settings.clone();
             orders.perform_cmd(async { Msg::SettingsSaved(save_settings(settings).await) });
             model.waiting_response = true;
+        }
+        Msg::SelectActivePlayer(value) => {
+            model.settings.active_player = PlayerType::from_str(value.as_str()).unwrap();
         }
         Msg::ToggleDacEnabled => {
             model.settings.dac_settings.enabled = !model.settings.dac_settings.enabled;
@@ -96,9 +138,52 @@ pub(crate) fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>)
             model.settings.mpd_settings.server_port = value;
         }
         Msg::InputLMSHostChange => {}
-        Msg::InputSpotifyDeviceNameChange => {}
-        Msg::InputSpotifyUsernameChange => {}
-        Msg::InputSpotifyPasswordChange => {}
+        Msg::InputSpotifyDeviceNameChange(value) => {
+            model.settings.spotify_settings.device_name = value;
+        }
+        Msg::InputSpotifyUsernameChange(value) => {
+            model.settings.spotify_settings.username = value;
+        }
+        Msg::InputSpotifyPasswordChange(value) => {
+            model.settings.spotify_settings.password = value;
+        }
+        Msg::InputSpotifyDeveloperClientId(value) => {
+            model.settings.spotify_settings.developer_client_id = value;
+        }
+        Msg::InputSpotifyDeveloperClientSecret(value) => {
+            model.settings.spotify_settings.developer_secret = value;
+        }
+        Msg::InputSpotifyAuthCallbackUrl(value) => {
+            model.settings.spotify_settings.auth_callback_url = value;
+        }
+        Msg::InputSpotifyAlsaDeviceName(value) => {
+            model.settings.spotify_settings.alsa_device_name = value;
+        }
+        Msg::SpotifyIsAuthorizedFetched(result) => {
+            log!("Auth result fetched", result);
+            if result == "true" {
+                model.spotify_is_authorized = true;
+            } else {
+                model.spotify_is_authorized = false;
+                orders.perform_cmd(async {
+                    Msg::SpotifyAuthorizationUrlFetched(
+                        fetch(API_SPOTIFY_GET_AUTH_URL_PATH)
+                            .await
+                            .expect("")
+                            .text()
+                            .await
+                            .expect(""),
+                    )
+                });
+            }
+        }
+        Msg::SpotifyAuthorizationUrlFetched(value) => {
+            log!("Url fetched", value);
+            model.spotify_auth_url = Some(value);
+        }
+        Msg::SpotifyAccountInfoFetched(info) => {
+            model.spotify_account_info = Some(info);
+        }
         Msg::RemoteConfiguration(sett) => {
             model.settings = sett;
         }
@@ -150,13 +235,14 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
                 ]
             ]
         ],
-        view_settings(&model.settings)
+        view_settings(&model)
     ]
 }
 
 // ------ configuration ------
 
-fn view_settings(settings: &Settings) -> Node<Msg> {
+fn view_settings(model: &Model) -> Node<Msg> {
+    let settings = &model.settings;
     div![
         section![
             C!["section"],
@@ -220,7 +306,34 @@ fn view_settings(settings: &Settings) -> Node<Msg> {
                     }
                 ]
             ],
-            IF!(settings.spotify_settings.enabled => view_spotify(&settings.spotify_settings))
+            IF!(settings.spotify_settings.enabled => view_spotify(model)),
+            div![
+                C!["field"],
+                label!["Active player:", C!["label"]],
+                div![
+                    C!["select"],
+                    select![
+                        option![
+                            attrs! {
+                                At::Value => "SPF"
+                            },
+                            IF!(settings.active_player == PlayerType::SPF => attrs!(At::Selected => "")),
+                            "Spotify"
+                        ],
+                        option![
+                            attrs! {At::Value => "MPD"},
+                            IF!(settings.active_player == PlayerType::MPD => attrs!(At::Selected => "")),
+                            "Music player daemon",
+                        ],
+                        option![
+                            attrs! {At::Value => "LMS"},
+                            IF!(settings.active_player == PlayerType::LMS => attrs!(At::Selected => "")),
+                            "Logitech media server",
+                        ],
+                        input_ev(Ev::Change, Msg::SelectActivePlayer),
+                    ],
+                ],
+            ],
         ],
         section![
             C!["section"],
@@ -323,7 +436,8 @@ fn view_dac(dac_settings: &DacSettings) -> Node<Msg> {
         ]
     ]
 }
-fn view_spotify(spot_settings: &SpotifySettings) -> Node<Msg> {
+fn view_spotify(model: &Model) -> Node<Msg> {
+    let spot_settings = &model.settings.spotify_settings;
     div![
         style! {
             St::PaddingBottom => "1.2rem"
@@ -339,6 +453,9 @@ fn view_spotify(spot_settings: &SpotifySettings) -> Node<Msg> {
                 div![
                     C!["field"],
                     input![C!["input"], attrs! {At::Value => spot_settings.device_name},],
+                    input_ev(Ev::Input, move |value| {
+                        Msg::InputSpotifyDeviceNameChange(value)
+                    }),
                 ]
             ],
         ],
@@ -353,6 +470,9 @@ fn view_spotify(spot_settings: &SpotifySettings) -> Node<Msg> {
                 div![
                     C!["field"],
                     input![C!["input"], attrs! {At::Value => spot_settings.username},],
+                    input_ev(Ev::Input, move |value| {
+                        Msg::InputSpotifyUsernameChange(value)
+                    }),
                 ]
             ],
         ],
@@ -367,9 +487,120 @@ fn view_spotify(spot_settings: &SpotifySettings) -> Node<Msg> {
                 div![
                     C!["field"],
                     input![C!["input"], attrs! {At::Value => spot_settings.password},],
+                    input_ev(Ev::Input, move |value| {
+                        Msg::InputSpotifyPasswordChange(value)
+                    }),
                 ]
             ],
         ],
+        div![
+            C!["field", "is-horizontal"],
+            div![
+                C!["field-label", "is-small"],
+                label!["Developer client id", C!["label"]],
+            ],
+            div![
+                C!["field-body"],
+                div![
+                    C!["field"],
+                    input![
+                        C!["input"],
+                        attrs! {At::Value => spot_settings.developer_client_id},
+                    ],
+                    input_ev(Ev::Input, move |value| {
+                        Msg::InputSpotifyDeveloperClientId(value)
+                    }),
+                ]
+            ],
+        ],
+        div![
+            C!["field", "is-horizontal"],
+            div![
+                C!["field-label", "is-small"],
+                label!["Developer secret", C!["label"]],
+            ],
+            div![
+                C!["field-body"],
+                div![
+                    C!["field"],
+                    input![
+                        C!["input"],
+                        attrs! {At::Value => spot_settings.developer_secret},
+                    ],
+                    input_ev(Ev::Input, move |value| {
+                        Msg::InputSpotifyDeveloperClientSecret(value)
+                    }),
+                ]
+            ],
+        ],
+        div![
+            C!["field", "is-horizontal"],
+            div![
+                C!["field-label", "is-small"],
+                label!["Auth callback url", C!["label"]],
+            ],
+            div![
+                C!["field-body"],
+                div![
+                    C!["field"],
+                    input![
+                        C!["input"],
+                        attrs! {At::Value => spot_settings.auth_callback_url},
+                    ],
+                    input_ev(Ev::Input, move |value| {
+                        Msg::InputSpotifyAuthCallbackUrl(value)
+                    }),
+                ]
+            ],
+        ],
+        div![
+            C!["field", "is-horizontal"],
+            div![
+                C!["field-label", "is-small"],
+                label!["Alsa device name", C!["label"]],
+            ],
+            div![
+                C!["field-body"],
+                div![
+                    C!["field"],
+                    input![
+                        C!["input"],
+                        attrs! {At::Value => spot_settings.alsa_device_name},
+                    ],
+                    input_ev(Ev::Input, move |value| {
+                        Msg::InputSpotifyAlsaDeviceName(value)
+                    }),
+                ]
+            ],
+        ],
+        div![
+            C!["field", "is-horizontal"],
+            div![
+                C!["field-label", "is-small"],
+                label!["Connected Spotify account", C!["label"]],
+            ],
+            div![
+                C!["field-body"],
+                div![
+                    C!["field"],
+                    IF!(model.spotify_auth_url.is_some() =>
+                        button![C!["is-primary", "is-large"],
+                            attrs! { At::OnClick => format!("window.open('{}')",model.spotify_auth_url.as_ref().unwrap()) },
+                        "Authorize",
+                        ]
+                    ),
+                    if let Some(me) = &model.spotify_account_info {
+
+                        div![
+                            p![me.display_name.clone()],
+                            img!(me.image_url.clone())
+                        ]
+                    }else{
+                        empty!()
+                    }
+                ]
+            ]
+        ]
     ]
 }
 fn view_lms(lms_settings: &LmsSettings) -> Node<Msg> {
