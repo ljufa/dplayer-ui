@@ -1,5 +1,5 @@
 use api_models::{
-    player::{Command, FilterType, PlayerType},
+    common::{Command, FilterType, GainLevel, PlayerType},
     settings::*,
     spotify::SpotifyAccountInfo,
 };
@@ -51,6 +51,11 @@ pub enum Msg {
     SpotifyIsAuthorizedFetched(String),
     SpotifyAccountInfoFetched(SpotifyAccountInfo),
     SpotifyAuthorizationUrlFetched(String),
+
+    InputAlsaDeviceChanged(String),
+
+    InputDacFilterChanged(FilterType),
+    InputDacGainLevelChanged(GainLevel),
 
     // --- Buttons ----
     SaveSettings,
@@ -112,6 +117,7 @@ pub(crate) fn init(_url: Url, orders: &mut impl Orders<Msg>) -> Model {
 pub(crate) fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>) {
     match msg {
         Msg::SaveSettings => {
+            // todo: show modal wait window while server is restarting. use ws status.
             let settings = model.settings.clone();
             orders.perform_cmd(async { Msg::SettingsSaved(save_settings(settings).await) });
             model.waiting_response = true;
@@ -158,6 +164,15 @@ pub(crate) fn update(msg: Msg, model: &mut Model, orders: &mut impl Orders<Msg>)
         }
         Msg::InputSpotifyAlsaDeviceName(value) => {
             model.settings.spotify_settings.alsa_device_name = value;
+        }
+        Msg::InputAlsaDeviceChanged(d) => {
+            model.settings.alsa_settings.device_name = d;
+        }
+        Msg::InputDacFilterChanged(f) => {
+            model.settings.dac_settings.filter = f;
+        }
+        Msg::InputDacGainLevelChanged(g) => {
+            model.settings.dac_settings.gain = g;
         }
         Msg::SpotifyIsAuthorizedFetched(result) => {
             log!("Auth result fetched", result);
@@ -337,22 +352,6 @@ fn view_settings(model: &Model) -> Node<Msg> {
         ],
         section![
             C!["section"],
-            h1![C!["title"], "Alsa"],
-            div![
-                C!["field"],
-                label!["Alsa audio device:", C!["label"]],
-                div![
-                    C!["select"],
-                    select![settings
-                        .alsa_settings
-                        .available_alsa_pcm_devices
-                        .iter()
-                        .map(|d| option![attrs! {At::Value => d.0}, d.1],)],
-                ],
-            ]
-        ],
-        section![
-            C!["section"],
             h1![C!["title"], "Dac"],
             div![
                 C!["field"],
@@ -402,11 +401,13 @@ fn view_dac(dac_settings: &DacSettings) -> Node<Msg> {
             C!["field"],
             label!["DAC Chip:", C!["label"]],
             div![
-                C!["select"],
-                select![
-                    option![attrs! {At::Value => "ak4497"}, "AK4497"],
-                    option![attrs! {At::Value => "ak4490"}, "AK4490"],
-                    option![attrs! {At::Value => "ak4495"}, "AK4495"],
+                C!["control"],
+                input![
+                    C!["input"],
+                    attrs! {
+                        At::Value => dac_settings.chip_id
+                        At::ReadOnly => true
+                    },
                 ],
             ],
         ],
@@ -426,9 +427,39 @@ fn view_dac(dac_settings: &DacSettings) -> Node<Msg> {
                 div![
                     C!["select"],
                     select![
-                        FilterType::iter().map(|fs| option![format!("{:?}", fs)]),
-                        input_ev(Ev::Change, move |selected| Msg::SendCommand(
-                            Command::Filter(FilterType::from_str(selected.as_str()).unwrap())
+                        FilterType::iter().map(|fs| {
+                            let v: &str = fs.into();
+                            option![
+                                attrs!( At::Value => v),
+                                IF!(dac_settings.filter == fs => attrs!(At::Selected => "")),
+                                v
+                            ]
+                        }),
+                        input_ev(Ev::Change, move |v| Msg::InputDacFilterChanged(
+                            FilterType::from_str(v.as_str()).expect("msg")
+                        )),
+                    ],
+                ],
+            ],
+        ],
+        div![
+            C!["field"],
+            label!["DAC Gain Level:", C!["label"]],
+            div![
+                C!["control"],
+                div![
+                    C!["select"],
+                    select![
+                        GainLevel::iter().map(|fs| {
+                            let v: &str = fs.into();
+                            option![
+                                attrs!( At::Value => v),
+                                IF!(dac_settings.gain == fs => attrs!(At::Selected => "")),
+                                v
+                            ]
+                        }),
+                        input_ev(Ev::Change, move |v| Msg::InputDacGainLevelChanged(
+                            GainLevel::from_str(v.as_str()).expect("msg")
                         )),
                     ],
                 ],
@@ -553,26 +584,33 @@ fn view_spotify(model: &Model) -> Node<Msg> {
                 ]
             ],
         ],
+
         div![
             C!["field", "is-horizontal"],
             div![
                 C!["field-label", "is-small"],
-                label!["Alsa device name", C!["label"]],
+                label!["Audio device name", C!["label"]],
             ],
             div![
                 C!["field-body"],
                 div![
-                    C!["field"],
-                    input![
-                        C!["input"],
-                        attrs! {At::Value => spot_settings.alsa_device_name},
-                    ],
-                    input_ev(Ev::Input, move |value| {
-                        Msg::InputSpotifyAlsaDeviceName(value)
-                    }),
-                ]
-            ],
+                    C!["select"],
+                    select![model.settings
+                        .alsa_settings
+                        .available_alsa_pcm_devices
+                        .iter()
+                        .map(|d| 
+                            option![
+                                IF!(spot_settings.alsa_device_name == *d.0 => attrs!(At::Selected => "")),
+                                attrs! {At::Value => d.0}, 
+                                d.1
+                            ])
+                        ],
+                    input_ev(Ev::Change, Msg::InputSpotifyAlsaDeviceName),
+                ],
+            ]
         ],
+
         div![
             C!["field", "is-horizontal"],
             div![
@@ -590,12 +628,8 @@ fn view_spotify(model: &Model) -> Node<Msg> {
                         ]
                     ),
                     if let Some(me) = &model.spotify_account_info {
-
-                        div![
-                            p![me.display_name.clone()],
-                            img!(me.image_url.clone())
-                        ]
-                    }else{
+                        div![p![me.display_name.clone()], p![me.email.clone()]]
+                    } else {
                         empty!()
                     }
                 ]

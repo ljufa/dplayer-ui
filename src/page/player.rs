@@ -1,4 +1,6 @@
 use api_models::player::*;
+use api_models::common::*;
+use api_models::state::*;
 use seed::{prelude::*, *};
 
 use std::str::FromStr;
@@ -9,7 +11,7 @@ use std::str::FromStr;
 
 #[derive(Debug)]
 pub struct Model {
-    streamer_status: StreamerStatus,
+    streamer_status: StreamerState,
     player_info: Option<PlayerInfo>,
     current_track_info: Option<Song>,
     waiting_response: bool,
@@ -18,10 +20,10 @@ pub struct Model {
 #[derive(Debug)]
 
 pub enum Msg {
-    StatusChangeEventReceived(StatusChangeEvent),
+    StatusChangeEventReceived(StateChangeEvent),
     AlbumImageUpdated(Image),
     SendCommand(Command),
-    CurrentStatusFetched(fetch::Result<LastStatus>),
+    CurrentStatusFetched(fetch::Result<LastState>),
 }
 #[derive(Debug, serde::Deserialize)]
 pub struct AlbumInfo {
@@ -45,10 +47,9 @@ pub struct Image {
 pub(crate) fn init(_: Url, orders: &mut impl Orders<Msg>) -> Model {
     orders.perform_cmd(async { Msg::CurrentStatusFetched(get_current_status().await) });
     Model {
-        streamer_status: StreamerStatus {
-            source_player: PlayerType::MPD,
+        streamer_status: StreamerState {
             selected_audio_output: AudioOut::SPKR,
-            dac_status: DacStatus::default(),
+            volume_state: VolumeState::default(),
         },
         player_info: None,
         current_track_info: None,
@@ -70,33 +71,38 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
             let track = st.current_track_info.clone();
             model.current_track_info = st.current_track_info;
             model.player_info = st.player_info;
-            if let Some(status) = st.streamer_status {
+            if let Some(status) = st.streamer_state {
                 model.streamer_status = status;
             }
+
             if let Some(track) = track {
-                orders.perform_cmd(async { update_album_cover(track).await });
+                if track.uri.is_none() {
+                    orders.perform_cmd(async { update_album_cover(track).await });
+                }
             }
         }
-        Msg::StatusChangeEventReceived(StatusChangeEvent::CurrentTrackInfoChanged(track_info)) => {
+        Msg::StatusChangeEventReceived(StateChangeEvent::CurrentTrackInfoChanged(track_info)) => {
             model.waiting_response = false;
             let ps = track_info.clone();
             model.current_track_info = Some(track_info);
-            orders.perform_cmd(async { update_album_cover(ps).await });
+            if ps.uri.is_none() {
+                orders.perform_cmd(async { update_album_cover(ps).await });
+            }
         }
 
-        Msg::StatusChangeEventReceived(StatusChangeEvent::PlayerInfoChanged(player_info)) => {
+        Msg::StatusChangeEventReceived(StateChangeEvent::PlayerInfoChanged(player_info)) => {
             model.waiting_response = false;
             model.player_info = Some(player_info);
         }
 
-        Msg::StatusChangeEventReceived(StatusChangeEvent::StreamerStatusChanged(
+        Msg::StatusChangeEventReceived(StateChangeEvent::StreamerStateChanged(
             streamer_status,
         )) => {
             model.waiting_response = false;
             model.streamer_status = streamer_status;
         }
 
-        Msg::StatusChangeEventReceived(StatusChangeEvent::Error(error)) => {
+        Msg::StatusChangeEventReceived(StateChangeEvent::Error(error)) => {
             model.remote_error = Some(error)
         }
         Msg::StatusChangeEventReceived(_) => {}
@@ -104,7 +110,7 @@ pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<M
             log!("Player {}", cmd);
             match cmd {
                 Command::SwitchToPlayer(_) => model.waiting_response = true,
-                Command::SetVol(vol) => model.streamer_status.dac_status.volume = vol,
+                Command::SetVol(vol) => model.streamer_status.volume_state.volume = vol as i64,
                 _ => (),
             }
         }
@@ -135,7 +141,7 @@ pub(crate) fn view(model: &Model) -> Node<Msg> {
                 model.player_info.as_ref()
             ),
             view_track_progress_bar(model.player_info.as_ref()),
-            view_volume_slider(&model.streamer_status.dac_status),
+            view_volume_slider(&model.streamer_status.volume_state),
             view_controls(model.player_info.as_ref()),
             view_controls_down(model.player_info.as_ref(), &model.streamer_status),
         ]
@@ -192,7 +198,7 @@ fn view_track_info(status: Option<&Song>, player_info: Option<&PlayerInfo>) -> N
                         ],
                     ],
                 ]),
-                if ps.title.is_none(){
+                if ps.title.is_none() {
                     div![
                         C!["level-item"],
                         div![p![
@@ -344,7 +350,7 @@ fn view_controls(player_info: Option<&PlayerInfo>) -> Node<Msg> {
 
 fn view_controls_down(
     player_info: Option<&PlayerInfo>,
-    streamer_status: &StreamerStatus,
+    streamer_status: &StreamerState,
 ) -> Node<Msg> {
     let audio_out = match streamer_status.selected_audio_output {
         AudioOut::SPKR => "speaker",
@@ -388,7 +394,7 @@ fn view_controls_down(
     ]
 }
 
-fn view_volume_slider(dac_status: &DacStatus) -> Node<Msg> {
+fn view_volume_slider(dac_status: &VolumeState) -> Node<Msg> {
     div![
         style! {
             St::Padding => "1.2rem",
@@ -420,74 +426,21 @@ fn view_volume_slider(dac_status: &DacStatus) -> Node<Msg> {
     ]
 }
 
-#[allow(clippy::logic_bug)]
-#[allow(dead_code)]
-fn view_player_switch(model: &Model) -> Node<Msg> {
-    let pt = model.streamer_status.source_player;
-
-    div![
-        C!["transparent"],
-        nav![
-            C!["level is-mobile"],
-            div![
-                C!["level-left"],
-                div![
-                    C!["level-item"],
-                    button![
-                        IF!(pt == PlayerType::MPD => attrs!{"disabled"=>true}),
-                        C!["button", "is-small"],
-                        span![C!("icon"), i![C!("fas fa-file-audio")]],
-                        span!("MPD"),
-                        ev(Ev::Click, |_| Msg::SendCommand(Command::SwitchToPlayer(
-                            PlayerType::MPD
-                        )))
-                    ]
-                ],
-                div![
-                    C!["level-item"],
-                    button![
-                        
-                        IF!(true || pt == PlayerType::SPF=> attrs!{"disabled"=>true}),
-                        C!["button", "is-small"],
-                        span![C!("icon"), i![C!("fab fa-spotify")]],
-                        span!("Spotify"),
-                        ev(Ev::Click, |_| Msg::SendCommand(Command::SwitchToPlayer(
-                            PlayerType::SPF
-                        )))
-                    ]
-                ],
-                div![
-                    C!["level-item"],
-                    button![
-                        IF!(pt == PlayerType::LMS=> attrs!{"disabled"=>true}),
-                        C!["button", "is-small"],
-                        span![C!("icon"), i![C!("fas fa-compact-disc")]],
-                        span!("LMS"),
-                        ev(Ev::Click, |_| Msg::SendCommand(Command::SwitchToPlayer(
-                            PlayerType::LMS
-                        )))
-                    ]
-                ],
-            ]
-        ]
-    ]
-}
-
 fn get_background_image(model: &Model) -> String {
     if let Some(ps) = model.current_track_info.as_ref() {
-        format!("url({})", ps.uri.as_ref().map_or("", |f| f))
+        format!("url({})", ps.uri.as_ref().map_or("/no_album.png", |f| f))
     } else {
         String::new()
     }
 }
 
-pub async fn get_current_status() -> fetch::Result<LastStatus> {
+pub async fn get_current_status() -> fetch::Result<LastState> {
     Request::new("/api/status")
         .method(Method::Get)
         .fetch()
         .await?
         .check_status()?
-        .json::<LastStatus>()
+        .json::<LastState>()
         .await
 }
 

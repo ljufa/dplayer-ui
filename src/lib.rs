@@ -1,13 +1,14 @@
 use std::rc::Rc;
 
-use api_models::player::StatusChangeEvent;
+use api_models::state::StateChangeEvent;
 use page::settings;
 use seed::{prelude::*, *};
 use strum_macros::IntoStaticStr;
 mod page;
 
+// todo: read host from current location
 #[cfg(feature = "remote")]
-const WS_URL: &str = "ws://192.168.5.59:8000/api/ws";
+const WS_URL: &str = "ws://dplayer.lan:8000/api/ws";
 
 #[cfg(feature = "local")]
 const WS_URL: &str = "ws://localhost:8000/api/ws";
@@ -36,7 +37,7 @@ pub enum Msg {
     WebSocketFailed,
     ReconnectWebSocket(usize),
     UrlChanged(subs::UrlChanged),
-    StatusChangeEventReceived(StatusChangeEvent),
+    StatusChangeEventReceived(StateChangeEvent),
     Settings(page::settings::Msg),
     Player(page::player::Msg),
     Playlist(page::playlist::Msg),
@@ -325,7 +326,7 @@ fn decode_message(message: WebSocketMessage, msg_sender: Rc<dyn Fn(Option<Msg>)>
     let msg_text = message.text();
     if msg_text.is_ok() {
         let msg = message
-            .json::<StatusChangeEvent>()
+            .json::<StateChangeEvent>()
             .unwrap_or_else(|_| panic!("Failed to decode WebSocket text message: {:?}", msg_text));
         msg_sender(Some(Msg::StatusChangeEventReceived(msg)));
     }

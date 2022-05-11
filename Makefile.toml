@@ -71,10 +71,10 @@ command = "wasm-pack"
 args = ["test", "--${@}"]
 
 [tasks.copyremote]
-env = { RPI_HOST = "192.168.5.59", RPI_DIR = "/home/ubuntu/.dplay/ui" }
+env = { RPI_HOST = "192.168.5.60", RPI_DIR = "/home/pi/.dplay/ui" }
 dependencies = ["build_release"]
 script = [
-    "rsync -av --delete public/ pkg ubuntu@${RPI_HOST}:${RPI_DIR}",
+    "rsync -av --delete public/ pkg pi@${RPI_HOST}:${RPI_DIR}",
 ]
 
 

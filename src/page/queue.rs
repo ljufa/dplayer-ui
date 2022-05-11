@@ -1,4 +1,5 @@
-use api_models::player::{Command, Song };
+use api_models::player::Song;
+use api_models::common::Command;
 use seed::{prelude::*, *};
 
 #[derive(Debug)]

@@ -1,6 +1,7 @@
 use api_models::{
     player::*,
-    playlist::{ Playlist},
+    common::*,
+    playlist::Playlist,
 };
 use seed::{prelude::*, *};
 
@@ -8,7 +9,7 @@ use seed::{prelude::*, *};
 pub struct Model {
     pub playlists: Vec<Playlist>,
     pub playlist_items: Vec<Song>,
-    pub selected_playlist: Option<Playlist>,
+    pub selected_playlist_id: Option<String>,
     pub waiting_response: bool
 }
 pub enum Msg {
@@ -26,7 +27,7 @@ pub(crate) fn init(_url: Url, orders: &mut impl Orders<Msg>) -> Model {
     Model {
         playlists: Vec::new(),
         playlist_items: Vec::new(),
-        selected_playlist: None,
+        selected_playlist_id: None,
         waiting_response: false
     }
 }
@@ -38,21 +39,19 @@ pub(crate) fn init(_url: Url, orders: &mut impl Orders<Msg>) -> Model {
 pub(crate) fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
     match msg {
         Msg::PlaylistsFetched(pls) => model.playlists = pls.unwrap_or_default(),
-        Msg::SelectPlaylist(plname) => {
+        Msg::SelectPlaylist(pl_id) => {
             model.waiting_response = true;
-            model.selected_playlist = Some(Playlist {
-                name: plname.clone(),
-            });
+            model.selected_playlist_id = Some(pl_id.clone());
             orders
-                .perform_cmd(async { Msg::PlaylistItemsFetched(get_playlist_items(plname).await) });
+                .perform_cmd(async { Msg::PlaylistItemsFetched(get_playlist_items(pl_id).await) });
         }
         Msg::SendCommand(cmd) => log!("Cmd:", cmd),
         Msg::PlaylistItemsFetched(pl_items) => {
             model.waiting_response = false;
             model.playlist_items = pl_items.unwrap_or_default()},
         Msg::LoadPlaylistIntoQueue => {
-            model.selected_playlist.clone().map(|pl| {
-                orders.perform_cmd(async { Msg::SendCommand(Command::LoadPlaylist(pl.name)) })
+            model.selected_playlist_id.clone().map(|pl| {
+                orders.perform_cmd(async { Msg::SendCommand(Command::LoadPlaylist(pl)) })
             });
         }
     }
@@ -81,7 +80,7 @@ fn view_playlist_selector(model: &Model) -> Node<Msg> {
                     model
                         .playlists
                         .iter()
-                        .map(|pl| option![attrs! {At::Value => &pl.name }, &pl.name]),
+                        .map(|pl| option![attrs! {At::Value => &pl.id }, &pl.name]),
                     input_ev(Ev::Change, Msg::SelectPlaylist),
                 ]
             ],
@@ -118,8 +117,8 @@ pub async fn get_playlists() -> fetch::Result<Vec<Playlist>> {
         .json::<Vec<Playlist>>()
         .await
 }
-pub async fn get_playlist_items(pl_name: String) -> fetch::Result<Vec<Song>> {
-    Request::new(format!("/api/playlist/{}", pl_name))
+pub async fn get_playlist_items(pl_id: String) -> fetch::Result<Vec<Song>> {
+    Request::new(format!("/api/playlist/{}", pl_id))
         .method(Method::Get)
         .fetch()
         .await?
